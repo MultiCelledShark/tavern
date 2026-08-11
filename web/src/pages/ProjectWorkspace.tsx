@@ -15,6 +15,7 @@ import ManuscriptEditor from "../components/ManuscriptEditor";
 import RelationshipGraph from "../components/RelationshipGraph";
 import MapCanvas from "../components/MapCanvas";
 import TimelineView from "../components/TimelineView";
+import Corkboard from "../components/Corkboard";
 import {
   ChromePanel,
   ChromeState,
@@ -498,21 +499,17 @@ export default function ProjectWorkspace({
           />
         )}
         {module === "manuscript" && corkboard && (
-          <div className="corkboard">
-            {elements.map((el) => (
-              <button
-                key={el.id}
-                className="cork-card"
-                onClick={() => {
-                  setSelectedId(el.id);
-                  setCorkboard(false);
-                }}
-              >
-                <h4>{el.title}</h4>
-                <p>Open chapter</p>
-              </button>
-            ))}
-          </div>
+          <Corkboard
+            elements={elements}
+            onOpen={(id) => {
+              setSelectedId(id);
+              setCorkboard(false);
+            }}
+            onChanged={async () => {
+              await refreshElements();
+              setAllElements(await api.elements(projectId));
+            }}
+          />
         )}
 
         {selected &&
