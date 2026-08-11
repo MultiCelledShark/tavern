@@ -13,6 +13,7 @@ import {
 } from "@xyflow/react";
 import "@xyflow/react/dist/style.css";
 import { api, Element, ElementLink } from "../api/client";
+import { TIPS } from "../tips";
 
 export default function RelationshipGraph({
   projectId,
@@ -91,8 +92,12 @@ export default function RelationshipGraph({
     <div>
       <div className="row" style={{ marginBottom: "0.75rem" }}>
         <h2 style={{ margin: 0 }}>Relationship web</h2>
-        <span className="muted">Drag between characters to link them</span>
+        <span className="muted" data-tip={TIPS.graphHint}>
+          Drag between characters to link them
+        </span>
         <button
+          type="button"
+          data-tip={TIPS.undoLink}
           onClick={async () => {
             const edge = edges[edges.length - 1];
             if (!edge) return;
@@ -104,7 +109,7 @@ export default function RelationshipGraph({
           Undo last link
         </button>
       </div>
-      <div className="relationship-canvas">
+      <div className="relationship-canvas" data-tip={TIPS.graphHint}>
         <ReactFlow
           nodes={nodes}
           edges={edges}

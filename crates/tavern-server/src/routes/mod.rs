@@ -32,6 +32,7 @@ pub fn router() -> Router<Arc<AppState>> {
         .route("/api/auth/me", get(me))
         .route("/api/users", get(list_users).post(create_user))
         .route("/api/projects", get(list_projects).post(create_project))
+        .route("/api/projects/tutorial", post(create_tutorial_project))
         .route(
             "/api/projects/{id}",
             get(get_project).put(update_project).delete(delete_project),
@@ -214,6 +215,18 @@ async fn create_project(
         .create_project(user.id, &body.title, body.synopsis.as_deref().unwrap_or(""))
         .await?;
     Ok((StatusCode::CREATED, Json(p)))
+}
+
+async fn create_tutorial_project(
+    AuthUser(user): AuthUser,
+    State(state): State<Arc<AppState>>,
+) -> Result<(StatusCode, Json<serde_json::Value>), ApiError> {
+    const TUTORIAL: &str = include_str!("../../../../samples/tutorial_project.json");
+    let (intermediate, report) =
+        tavern_import::load_bytes(TUTORIAL.as_bytes(), Some("tutorial_project.json"))?;
+    let prepared = tavern_import::prepare(intermediate, report)?;
+    let body = materialize_import(&state, user.id, prepared, TUTORIAL.as_bytes()).await?;
+    Ok((StatusCode::CREATED, body))
 }
 
 async fn get_project(
@@ -1033,10 +1046,18 @@ async fn import_project(
     let (intermediate, report) =
         tavern_import::load_bytes(&bytes, filename.as_deref())?;
     let prepared = tavern_import::prepare(intermediate, report)?;
+    materialize_import(&state, user.id, prepared, &bytes).await
+}
 
+async fn materialize_import(
+    state: &AppState,
+    owner_id: Uuid,
+    prepared: tavern_import::PreparedImport,
+    original_bytes: &[u8],
+) -> Result<Json<serde_json::Value>, ApiError> {
     let project = state
         .db
-        .create_project(user.id, &prepared.project.title, &prepared.project.synopsis)
+        .create_project(owner_id, &prepared.project.title, &prepared.project.synopsis)
         .await?;
 
     let mut title_to_id: HashMap<String, Uuid> = HashMap::new();
@@ -1064,7 +1085,6 @@ async fn import_project(
             let md = el.body_markdown.clone().unwrap_or_default();
             state.db.set_manuscript(created.id, &md, 0).await?;
         } else if !el.panels.is_empty() {
-            // clear default pages if any and apply imported panels on a page
             let pages = state.db.list_pages(created.id).await?;
             for p in pages {
                 state.db.delete_page(p.id).await?;
@@ -1116,7 +1136,6 @@ async fn import_project(
         }
     }
 
-    // resolve parents
     for el in &prepared.project.elements {
         if let Some(parent_title) = &el.parent_title {
             if let (Some(child), Some(parent)) =
@@ -1157,13 +1176,12 @@ async fn import_project(
         }
     }
 
-    // stash original bytes
     let import_path = state
         .config
         .data_dir
         .join("imports")
         .join(format!("{}.bin", project.id));
-    let _ = std::fs::write(&import_path, &bytes);
+    let _ = std::fs::write(&import_path, original_bytes);
 
     Ok(Json(serde_json::json!({
         "project": project,

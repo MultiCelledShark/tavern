@@ -551,6 +551,84 @@ label.buttonish {
 .stack { display: grid; gap: 0.65rem; }
 .error { color: var(--danger); }
 
+/* Hover / focus tooltips for self-guided UI */
+[data-tip] {
+  position: relative;
+}
+
+[data-tip]::after {
+  content: attr(data-tip);
+  position: absolute;
+  left: 50%;
+  bottom: calc(100% + 0.45rem);
+  transform: translateX(-50%) translateY(0.15rem);
+  z-index: 40;
+  width: max-content;
+  max-width: min(16rem, 70vw);
+  padding: 0.4rem 0.55rem;
+  border-radius: 6px;
+  background: var(--ink);
+  color: var(--stone);
+  font-size: 0.78rem;
+  font-family: var(--font-body);
+  font-weight: 400;
+  letter-spacing: 0;
+  line-height: 1.35;
+  text-align: left;
+  white-space: normal;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.12s ease, transform 0.12s ease;
+  box-shadow: 0 8px 20px rgba(28, 36, 33, 0.18);
+}
+
+[data-tip]:hover::after,
+[data-tip]:focus-visible::after {
+  opacity: 1;
+  transform: translateX(-50%) translateY(0);
+}
+
+[data-tip].tip-below::after {
+  bottom: auto;
+  top: calc(100% + 0.45rem);
+  transform: translateX(-50%) translateY(-0.15rem);
+}
+
+[data-tip].tip-below:hover::after,
+[data-tip].tip-below:focus-visible::after {
+  transform: translateX(-50%) translateY(0);
+}
+
+[data-tip].tip-right::after {
+  left: calc(100% + 0.45rem);
+  bottom: auto;
+  top: 50%;
+  transform: translate(0.15rem, -50%);
+}
+
+[data-tip].tip-right:hover::after,
+[data-tip].tip-right:focus-visible::after {
+  transform: translate(0, -50%);
+}
+
+.module-rail,
+.element-list,
+.inspector,
+.topbar,
+.main-canvas {
+  overflow: visible;
+}
+
+.module-rail {
+  overflow-y: auto;
+}
+
+.element-list,
+.inspector,
+.main-canvas {
+  overflow: auto;
+}
+
 @media (max-width: 960px) {
   .app-shell {
     grid-template-columns: 1fr;

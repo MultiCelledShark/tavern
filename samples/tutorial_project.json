@@ -1,0 +1,277 @@
+{
+  "title": "Tour of the Tavern",
+  "synopsis": "A guided sample project. Open each module in the left rail and read the encyclopedia article “Welcome — start here”. Synthetic content only.",
+  "elements": [
+    {
+      "module_type": "encyclopedia",
+      "title": "Welcome — start here",
+      "metadata": {},
+      "panels": [
+        {
+          "panel_type": "text",
+          "title": "How to tour",
+          "content": {
+            "markdown": "Welcome to Tavern.\n\n1. Use the **left rail** to switch modules (hover any control for a short tip).\n2. Pick an item in the **second column** to open it in the canvas.\n3. Try **Focus** in the top bar while editing the manuscript chapter.\n4. On Characters / Locations / Systems, drag panels on the canvas.\n5. Open **Relationships** to connect characters on the graph.\n6. **Maps** and **Timeline** show places and chronology.\n\nWhen you are done exploring, create your own project from the home page — this tour is safe to delete."
+          }
+        },
+        {
+          "panel_type": "attributes",
+          "title": "Quick facts",
+          "content": {
+            "items": [
+              { "key": "Purpose", "value": "Interactive tutorial" },
+              { "key": "Safe to delete", "value": "Yes" }
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "module_type": "manuscript",
+      "title": "Chapter 1 — First draft",
+      "metadata": {},
+      "body_markdown": "The lanterns along Saltglass Pier burned a soft green.\n\n[[Character:Mira Quill]] rolled her charts flat against the rail and whispered a tideworking cant. Far below, the water answered.\n\nUse **Save** after edits. Toggle **Source** for raw markdown. Set a **Goal** to track word count. Wiki links look like `[[Character:Name]]`.",
+      "panels": []
+    },
+    {
+      "module_type": "character",
+      "title": "Mira Quill",
+      "metadata": {},
+      "panels": [
+        {
+          "panel_type": "attributes",
+          "title": "Basics",
+          "content": {
+            "items": [
+              { "key": "Role", "value": "Cartographer" },
+              { "key": "Age", "value": "34" },
+              { "key": "Species", "value": "Human" }
+            ]
+          }
+        },
+        {
+          "panel_type": "text",
+          "title": "Backstory",
+          "content": {
+            "markdown": "Mira maps coasts that vanish between tides. Add panels with **Add panel…**, drag them by the ⠿ handle, and upload images into an Image panel."
+          }
+        },
+        {
+          "panel_type": "list",
+          "title": "Traits",
+          "content": { "items": ["Patient", "Salt-stained notebooks", "Hears the tide early"] }
+        },
+        {
+          "panel_type": "links",
+          "title": "Connections",
+          "content": { "element_ids": [] }
+        }
+      ]
+    },
+    {
+      "module_type": "location",
+      "title": "Saltglass Pier",
+      "metadata": {},
+      "panels": [
+        {
+          "panel_type": "attributes",
+          "title": "Details",
+          "content": {
+            "items": [
+              { "key": "Region", "value": "Harbor Reach" },
+              { "key": "Climate", "value": "Fog, green glass light" }
+            ]
+          }
+        },
+        {
+          "panel_type": "text",
+          "title": "Description",
+          "content": {
+            "markdown": "A crooked pier of green glass stakes. Pin this place on the **Harbor Chart** map when you upload a background image."
+          }
+        },
+        {
+          "panel_type": "image",
+          "title": "References",
+          "content": { "images": [] }
+        }
+      ]
+    },
+    {
+      "module_type": "systems",
+      "title": "Tideworking",
+      "metadata": { "kind": "magic" },
+      "panels": [
+        {
+          "panel_type": "attributes",
+          "title": "Classification",
+          "content": {
+            "items": [
+              { "key": "Kind", "value": "magic" },
+              { "key": "Source", "value": "Lunar tide differentials" },
+              { "key": "Cost", "value": "Cold hands, lost hours" }
+            ]
+          }
+        },
+        {
+          "panel_type": "text",
+          "title": "Rules",
+          "content": {
+            "markdown": "Magic drawn from the difference between expected and observed tide. Try **Add row** on Metrics and Examples — rows should stay after save."
+          }
+        },
+        {
+          "panel_type": "stats",
+          "title": "Metrics",
+          "content": {
+            "items": [
+              { "key": "Range", "value": "One cove" },
+              { "key": "Reliability", "value": "Weather-dependent" }
+            ]
+          }
+        },
+        {
+          "panel_type": "table",
+          "title": "Examples",
+          "content": {
+            "headers": ["Name", "Effect"],
+            "rows": [
+              ["Green pull", "Draws fog shoreward"],
+              ["Chart echo", "Brief glimpse of a future dock"]
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "module_type": "relationship",
+      "title": "Harbor ties",
+      "metadata": {},
+      "panels": [
+        {
+          "panel_type": "text",
+          "title": "Notes",
+          "content": {
+            "markdown": "The Relationships module shows a graph of **characters**. Drag to connect nodes; edges become project links."
+          }
+        },
+        {
+          "panel_type": "links",
+          "title": "Members",
+          "content": { "element_ids": [] }
+        }
+      ]
+    },
+    {
+      "module_type": "encyclopedia",
+      "title": "Green lantern oil",
+      "metadata": {},
+      "panels": [
+        {
+          "panel_type": "text",
+          "title": "Entry",
+          "content": {
+            "markdown": "Fuel refined from tideglass kelp. Encyclopedia entries are flexible lore pages — good for items, cultures, or research notes."
+          }
+        },
+        {
+          "panel_type": "attributes",
+          "title": "Facts",
+          "content": {
+            "items": [{ "key": "Smell", "value": "Citrus and brine" }]
+          }
+        }
+      ]
+    },
+    {
+      "module_type": "maps",
+      "title": "Harbor Chart",
+      "metadata": {
+        "background_url": "",
+        "pins": []
+      },
+      "panels": [
+        {
+          "panel_type": "text",
+          "title": "Notes",
+          "content": {
+            "markdown": "Upload a map image, then click the chart to drop pins. Link a pin to **Saltglass Pier** from the pin editor."
+          }
+        },
+        {
+          "panel_type": "list",
+          "title": "Regions",
+          "content": { "items": ["Harbor Reach", "Outer shoals"] }
+        }
+      ]
+    },
+    {
+      "module_type": "timeline",
+      "title": "Lanterns first lit",
+      "metadata": {
+        "date": "1247-03-01",
+        "date_label": "Spring 1247"
+      },
+      "panels": [
+        {
+          "panel_type": "attributes",
+          "title": "When",
+          "content": {
+            "items": [
+              { "key": "Date", "value": "1247-03-01" },
+              { "key": "Era", "value": "Harbor founding" }
+            ]
+          }
+        },
+        {
+          "panel_type": "text",
+          "title": "What happened",
+          "content": {
+            "markdown": "The first green lanterns were hung on Saltglass Pier. Timeline events sort by the date field in the toolbar above the panels."
+          }
+        }
+      ]
+    },
+    {
+      "module_type": "timeline",
+      "title": "Mira arrives",
+      "metadata": {
+        "date": "1247-09-12",
+        "date_label": "Autumn 1247"
+      },
+      "panels": [
+        {
+          "panel_type": "attributes",
+          "title": "When",
+          "content": {
+            "items": [
+              { "key": "Date", "value": "1247-09-12" },
+              { "key": "Era", "value": "Survey season" }
+            ]
+          }
+        },
+        {
+          "panel_type": "text",
+          "title": "What happened",
+          "content": {
+            "markdown": "Mira Quill rented a loft above the pier charts. Add more events with **+** in the element list."
+          }
+        }
+      ]
+    }
+  ],
+  "links": [
+    {
+      "from_title": "Mira Quill",
+      "to_title": "Saltglass Pier",
+      "label": "works at",
+      "link_type": "location"
+    },
+    {
+      "from_title": "Mira Quill",
+      "to_title": "Tideworking",
+      "label": "practices",
+      "link_type": "related"
+    }
+  ]
+}

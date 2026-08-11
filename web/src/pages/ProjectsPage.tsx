@@ -1,6 +1,7 @@
 import { FormEvent, useEffect, useState } from "react";
-import { Link } from "react-router-dom";
+import { Link, useNavigate } from "react-router-dom";
 import { api, Project, User } from "../api/client";
+import { TIPS } from "../tips";
 
 export default function ProjectsPage({
   user,
@@ -9,10 +10,12 @@ export default function ProjectsPage({
   user: User;
   onLogout: () => Promise<void>;
 }) {
+  const navigate = useNavigate();
   const [projects, setProjects] = useState<Project[]>([]);
   const [title, setTitle] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [importNote, setImportNote] = useState<string | null>(null);
+  const [busyTutorial, setBusyTutorial] = useState(false);
 
   async function refresh() {
     setProjects(await api.projects());
@@ -44,34 +47,67 @@ export default function ProjectsPage({
     }
   }
 
+  async function loadTutorial() {
+    setBusyTutorial(true);
+    setError(null);
+    try {
+      const res = await api.createTutorial();
+      setImportNote(
+        `Loaded “${res.project.title}”. Open Encyclopedia → Welcome — start here.`
+      );
+      await refresh();
+      navigate(`/project/${res.project.id}`);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Could not load tutorial");
+    } finally {
+      setBusyTutorial(false);
+    }
+  }
+
   return (
     <div>
       <header className="topbar">
-        <div className="brand">Tavern</div>
+        <div className="brand" data-tip={TIPS.brand}>
+          Tavern
+        </div>
         <span className="muted" style={{ color: "#c5cec8" }}>
           {user.username}
           {user.is_admin ? " · admin" : ""}
         </span>
         <div className="spacer" />
-        <button onClick={() => onLogout()}>Log out</button>
+        <button type="button" data-tip={TIPS.logout} onClick={() => onLogout()}>
+          Log out
+        </button>
       </header>
       <div className="projects-page">
         <h1>Your projects</h1>
-        <p className="muted">Manuscripts, characters, lore, and systems — linked together.</p>
+        <p className="muted">
+          Manuscripts, characters, lore, and systems — linked together. Hover any control for a
+          short tip.
+        </p>
 
         <form className="row" onSubmit={create} style={{ marginTop: "1.25rem" }}>
           <input
             placeholder="New project title"
             value={title}
             onChange={(e) => setTitle(e.target.value)}
+            data-tip={TIPS.createProject}
           />
-          <button className="primary" type="submit">
+          <button className="primary" type="submit" data-tip={TIPS.createProject}>
             Create
+          </button>
+          <button
+            type="button"
+            data-tip={TIPS.tutorial}
+            disabled={busyTutorial}
+            onClick={loadTutorial}
+          >
+            {busyTutorial ? "Loading tour…" : "Load tutorial project"}
           </button>
         </form>
 
         <div className="row" style={{ marginTop: "0.85rem" }}>
-          <label className="muted">
+          <label className="muted" data-tip={TIPS.importProject}>
             Import Campfire / `.tavern` / JSON{" "}
             <input
               type="file"
@@ -82,6 +118,16 @@ export default function ProjectsPage({
         </div>
         {importNote && <p>{importNote}</p>}
         {error && <p className="error">{error}</p>}
+
+        {projects.length === 0 && (
+          <p className="muted" style={{ marginTop: "1.5rem" }}>
+            No projects yet — create one, or{" "}
+            <button type="button" className="primary" data-tip={TIPS.tutorial} onClick={loadTutorial}>
+              start the guided tour
+            </button>
+            .
+          </p>
+        )}
 
         <div className="project-grid">
           {projects.map((p) => (
@@ -94,13 +140,14 @@ export default function ProjectsPage({
               </Link>
               <div className="row" style={{ marginTop: "0.75rem" }}>
                 <Link to={`/project/${p.id}`}>
-                  <button type="button" className="primary">
+                  <button type="button" className="primary" data-tip={TIPS.openProject}>
                     Open
                   </button>
                 </Link>
                 <button
                   type="button"
                   className="danger"
+                  data-tip={TIPS.deleteProject}
                   onClick={async () => {
                     if (!confirm(`Delete project “${p.title}”?`)) return;
                     await api.deleteProject(p.id);

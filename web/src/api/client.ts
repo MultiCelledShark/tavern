@@ -234,6 +234,11 @@ export const api = {
       { method: "POST", body: fd, headers: {} }
     );
   },
+  createTutorial: () =>
+    req<{ project: Project; report: { notes: string[] } }>("/api/projects/tutorial", {
+      method: "POST",
+      body: "{}",
+    }),
 };
 
 export const MODULES: { id: ModuleType; label: string }[] = [

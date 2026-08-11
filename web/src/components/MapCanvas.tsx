@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type MouseEvent } from "react";
 import { api, Element } from "../api/client";
+import { TIPS } from "../tips";
 
 export type MapPin = {
   id: string;
@@ -126,9 +127,10 @@ export default function MapCanvas({
             if (title !== element.title) void persist(title, bg, pins);
           }}
           style={{ fontFamily: "var(--font-display)", fontSize: "1.4rem", fontWeight: 700 }}
+          data-tip={TIPS.elementTitle}
         />
         {canEdit && (
-          <label className="buttonish">
+          <label className="buttonish" data-tip={TIPS.mapUpload}>
             {bg ? "Replace map image" : "Upload map image"}
             <input
               type="file"
@@ -141,7 +143,7 @@ export default function MapCanvas({
         {busy && <span className="muted">Saving…</span>}
       </div>
       {error && <p className="error">{error}</p>}
-      <p className="muted" style={{ marginTop: 0 }}>
+      <p className="muted" style={{ marginTop: 0 }} data-tip={TIPS.mapPin}>
         {canEdit
           ? "Click the map to drop a pin. Select a pin to rename or link a location."
           : "View-only map."}
@@ -149,7 +151,7 @@ export default function MapCanvas({
 
       <div className="map-stage" ref={frameRef}>
         {bg ? (
-          <div className="map-frame" onClick={placePin}>
+          <div className="map-frame" onClick={placePin} title={TIPS.mapPin}>
             <img src={bg} alt={title} draggable={false} />
             {pins.map((pin) => (
               <button
@@ -157,7 +159,7 @@ export default function MapCanvas({
                 type="button"
                 className={`map-pin${selected === pin.id ? " active" : ""}`}
                 style={{ left: `${pin.x * 100}%`, top: `${pin.y * 100}%` }}
-                title={pin.label}
+                data-tip={pin.label}
                 onClick={(ev) => {
                   ev.stopPropagation();
                   setSelected(pin.id);
@@ -168,7 +170,9 @@ export default function MapCanvas({
             ))}
           </div>
         ) : (
-          <div className="map-empty muted">Upload a map image to begin placing pins.</div>
+          <div className="map-empty muted" data-tip={TIPS.mapUpload}>
+            Upload a map image to begin placing pins.
+          </div>
         )}
       </div>
 
@@ -177,6 +181,7 @@ export default function MapCanvas({
           <strong>Pin</strong>
           <input
             value={selectedPin.label}
+            data-tip={TIPS.mapPinLabel}
             onChange={(e) => {
               const next = pins.map((p) =>
                 p.id === selectedPin.id ? { ...p, label: e.target.value } : p
@@ -187,6 +192,7 @@ export default function MapCanvas({
           />
           <select
             value={selectedPin.element_id || ""}
+            data-tip={TIPS.mapPinLink}
             onChange={(e) => {
               const next = pins.map((p) =>
                 p.id === selectedPin.id
@@ -206,6 +212,8 @@ export default function MapCanvas({
           </select>
           <button
             className="danger"
+            type="button"
+            data-tip={TIPS.mapPinRemove}
             onClick={() => {
               const next = pins.filter((p) => p.id !== selectedPin.id);
               setPins(next);

@@ -1,6 +1,7 @@
 import { useMemo, useState } from "react";
 import { api, Element } from "../api/client";
 import PanelCanvas from "./PanelCanvas";
+import { TIPS } from "../tips";
 
 function eventDate(el: Element): string {
   const m = el.metadata || {};
@@ -76,6 +77,7 @@ export default function TimelineView({
               <button
                 type="button"
                 className={selectedId === el.id ? "active" : ""}
+                data-tip={TIPS.timelineEvent}
                 onClick={() => selectEvent(el)}
               >
                 <span className="timeline-when">{eventLabel(el)}</span>
@@ -99,6 +101,7 @@ export default function TimelineView({
                   onChange={(e) => setDateDraft(e.target.value)}
                   onBlur={() => saveMeta(selected, dateDraft, labelDraft)}
                   style={{ maxWidth: 220 }}
+                  data-tip={TIPS.timelineDate}
                 />
                 <input
                   type="text"
@@ -106,6 +109,7 @@ export default function TimelineView({
                   value={labelDraft}
                   onChange={(e) => setLabelDraft(e.target.value)}
                   onBlur={() => saveMeta(selected, dateDraft, labelDraft)}
+                  data-tip={TIPS.timelineLabel}
                 />
               </div>
             )}

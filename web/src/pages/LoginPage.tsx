@@ -1,5 +1,6 @@
 import { FormEvent, useState } from "react";
 import { api, User } from "../api/client";
+import { TIPS } from "../tips";
 
 export default function LoginPage({ onLogin }: { onLogin: (u: User) => void }) {
   const [username, setUsername] = useState("");
@@ -24,15 +25,22 @@ export default function LoginPage({ onLogin }: { onLogin: (u: User) => void }) {
   return (
     <div className="login-page">
       <div className="login-card">
-        <div className="brand">Tavern</div>
+        <div className="brand" data-tip={TIPS.brand}>
+          Tavern
+        </div>
         <h1>Pull up a chair</h1>
         <p>Self-hosted writing & worldbuilding — your stories, your fire.</p>
         <form onSubmit={submit}>
-          <label>
+          <label data-tip={TIPS.loginUser}>
             Username
-            <input value={username} onChange={(e) => setUsername(e.target.value)} autoComplete="username" required />
+            <input
+              value={username}
+              onChange={(e) => setUsername(e.target.value)}
+              autoComplete="username"
+              required
+            />
           </label>
-          <label>
+          <label data-tip={TIPS.loginPass}>
             Password
             <input
               type="password"
@@ -43,7 +51,7 @@ export default function LoginPage({ onLogin }: { onLogin: (u: User) => void }) {
             />
           </label>
           {error && <div className="error">{error}</div>}
-          <button className="primary" disabled={busy}>
+          <button className="primary" disabled={busy} data-tip="Sign in to your writing workspace">
             {busy ? "Entering…" : "Enter"}
           </button>
         </form>

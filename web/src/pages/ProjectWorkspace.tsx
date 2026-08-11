@@ -15,6 +15,18 @@ import ManuscriptEditor from "../components/ManuscriptEditor";
 import RelationshipGraph from "../components/RelationshipGraph";
 import MapCanvas from "../components/MapCanvas";
 import TimelineView from "../components/TimelineView";
+import { TIPS } from "../tips";
+
+const MODULE_TIPS: Record<ModuleType, string> = {
+  manuscript: TIPS.moduleManuscript,
+  character: TIPS.moduleCharacter,
+  encyclopedia: TIPS.moduleEncyclopedia,
+  relationship: TIPS.moduleRelationship,
+  location: TIPS.moduleLocation,
+  systems: TIPS.moduleSystems,
+  maps: TIPS.moduleMaps,
+  timeline: TIPS.moduleTimeline,
+};
 
 export default function ProjectWorkspace({
   user,
@@ -111,13 +123,17 @@ export default function ProjectWorkspace({
   return (
     <div className={`app-shell${focus ? " focus-mode" : ""}`}>
       <header className="topbar">
-        <Link to="/" className="brand" style={{ textDecoration: "none" }}>
+        <Link to="/" className="brand" style={{ textDecoration: "none" }} data-tip={TIPS.brand}>
           Tavern
         </Link>
         <span>{project?.title || "…"}</span>
         <div className="spacer" />
-        <button onClick={() => setFocus((f) => !f)}>{focus ? "Exit focus" : "Focus"}</button>
+        <button type="button" data-tip={TIPS.focus} onClick={() => setFocus((f) => !f)}>
+          {focus ? "Exit focus" : "Focus"}
+        </button>
         <button
+          type="button"
+          data-tip={TIPS.exportMd}
           onClick={async () => {
             const blob = await api.exportProject(projectId, "markdown", "manuscript");
             await download(blob, `${project?.title || "project"}-manuscript.md`);
@@ -126,6 +142,8 @@ export default function ProjectWorkspace({
           Export MD
         </button>
         <button
+          type="button"
+          data-tip={TIPS.exportDocx}
           onClick={async () => {
             try {
               const blob = await api.exportProject(projectId, "docx", "manuscript");
@@ -138,6 +156,8 @@ export default function ProjectWorkspace({
           Export DOCX
         </button>
         <button
+          type="button"
+          data-tip={TIPS.backup}
           onClick={async () => {
             const blob = await api.backupProject(projectId);
             await download(blob, `${project?.title || "project"}.tavern`);
@@ -148,14 +168,18 @@ export default function ProjectWorkspace({
         <span className="muted" style={{ color: "#c5cec8" }}>
           {user.username}
         </span>
-        <button onClick={() => onLogout()}>Log out</button>
+        <button type="button" data-tip={TIPS.logout} onClick={() => onLogout()}>
+          Log out
+        </button>
       </header>
 
       <nav className="module-rail">
         {MODULES.map((m) => (
           <button
             key={m.id}
-            className={module === m.id ? "active" : ""}
+            type="button"
+            className={`tip-right${module === m.id ? " active" : ""}`}
+            data-tip={MODULE_TIPS[m.id]}
             onClick={() => {
               setModule(m.id);
               setCorkboard(false);
@@ -172,14 +196,20 @@ export default function ProjectWorkspace({
             placeholder={createLabel}
             value={newTitle}
             onChange={(e) => setNewTitle(e.target.value)}
+            data-tip={TIPS.newElement}
           />
-          <button className="primary" onClick={createElement}>
+          <button className="primary" type="button" data-tip={TIPS.newElement} onClick={createElement}>
             +
           </button>
         </header>
         {module === "manuscript" && (
           <div className="row" style={{ padding: "0.5rem 0.75rem" }}>
-            <button className={corkboard ? "primary" : ""} onClick={() => setCorkboard((c) => !c)}>
+            <button
+              type="button"
+              className={corkboard ? "primary" : ""}
+              data-tip={TIPS.corkboard}
+              onClick={() => setCorkboard((c) => !c)}
+            >
               Corkboard
             </button>
           </div>
@@ -193,7 +223,9 @@ export default function ProjectWorkspace({
           {elements.map((el) => (
             <li key={el.id}>
               <button
+                type="button"
                 className={selectedId === el.id ? "active" : ""}
+                data-tip={`Open “${el.title}” in the canvas`}
                 onClick={() => setSelectedId(el.id)}
               >
                 {el.title}
@@ -310,7 +342,7 @@ export default function ProjectWorkspace({
           )}
       </main>
 
-      <aside className="inspector">
+      <aside className="inspector" data-tip={TIPS.inspector}>
         <h3 style={{ marginTop: 0 }}>Inspector</h3>
         {selected && (
           <div className="stack">
@@ -320,7 +352,9 @@ export default function ProjectWorkspace({
               <div className="muted">{selected.module_type}</div>
             </div>
             <button
+              type="button"
               className="danger"
+              data-tip={TIPS.deleteElement}
               onClick={async () => {
                 if (!confirm("Delete this element?")) return;
                 await api.deleteElement(selected.id);
@@ -333,7 +367,7 @@ export default function ProjectWorkspace({
           </div>
         )}
         <hr />
-        <h4>Wiki tips</h4>
+        <h4 data-tip={TIPS.wikiTip}>Wiki tips</h4>
         <p className="muted" style={{ fontSize: "0.9rem" }}>
           Link with <code>[[Character:Name]]</code> in manuscript text.
         </p>
@@ -343,8 +377,10 @@ export default function ProjectWorkspace({
             <li key={g.user_id}>
               {g.username || g.user_id} · {g.role}{" "}
               <button
+                type="button"
                 className="ghost"
                 style={{ padding: "0.1rem 0.35rem" }}
+                data-tip="Revoke this user's project access"
                 onClick={async () => {
                   await api.deleteGrant(projectId, g.user_id);
                   setGrants(await api.grants(projectId));
@@ -360,8 +396,11 @@ export default function ProjectWorkspace({
             placeholder="Username to grant"
             value={grantUser}
             onChange={(e) => setGrantUser(e.target.value)}
+            data-tip={TIPS.grant}
           />
           <button
+            type="button"
+            data-tip={TIPS.grant}
             onClick={async () => {
               await api.upsertGrant(projectId, { username: grantUser, role: "editor" });
               setGrantUser("");
@@ -373,6 +412,8 @@ export default function ProjectWorkspace({
         </div>
         <h4 style={{ marginTop: "1rem" }}>Export bible</h4>
         <button
+          type="button"
+          data-tip={TIPS.bible}
           onClick={async () => {
             const blob = await api.exportProject(projectId, "markdown", "bible");
             await download(blob, `${project?.title || "project"}-bible.md`);

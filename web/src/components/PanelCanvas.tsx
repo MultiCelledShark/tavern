@@ -3,6 +3,7 @@ import GridLayout, { Layout } from "react-grid-layout";
 import "react-grid-layout/css/styles.css";
 import "react-resizable/css/styles.css";
 import { api, Element, Page, Panel } from "../api/client";
+import { TIPS } from "../tips";
 
 const PANEL_TYPES = [
   "attributes",
@@ -112,11 +113,13 @@ export default function PanelCanvas({
             if (title !== element.title) onTitle(title);
           }}
           style={{ fontFamily: "var(--font-display)", fontSize: "1.4rem", fontWeight: 700 }}
+          data-tip={TIPS.elementTitle}
         />
         <select
           value={pageId || ""}
           onChange={(e) => setPageId(e.target.value)}
           style={{ maxWidth: 180 }}
+          data-tip={TIPS.pageSelect}
         >
           {pages.map((p) => (
             <option key={p.id} value={p.id}>
@@ -128,6 +131,7 @@ export default function PanelCanvas({
           <>
             <select
               defaultValue=""
+              data-tip={TIPS.addPanel}
               onChange={async (e) => {
                 const panel_type = e.target.value;
                 e.target.value = "";
@@ -149,6 +153,8 @@ export default function PanelCanvas({
               ))}
             </select>
             <button
+              type="button"
+              data-tip={TIPS.addPage}
               onClick={async () => {
                 const page = await api.createPage(element.id, `Page ${pages.length + 1}`);
                 const list = await api.pages(element.id);
@@ -192,7 +198,9 @@ export default function PanelCanvas({
           {panels.map((panel) => (
             <div key={panel.id} style={{ borderColor: panel.border_color || undefined }}>
               <div className="panel-header">
-                <span className="drag-handle">⠿</span>
+                <span className="drag-handle" data-tip={TIPS.panelDrag}>
+                  ⠿
+                </span>
                 <input
                   value={panel.title}
                   onChange={(e) =>
@@ -202,11 +210,14 @@ export default function PanelCanvas({
                   }
                   onBlur={() => persistPanel(panel, { title: panel.title })}
                   style={{ border: "none", background: "transparent", padding: 0 }}
+                  data-tip={TIPS.panelTitle}
                 />
                 <div className="spacer" />
                 {canEdit && (
                   <button
                     className="ghost"
+                    type="button"
+                    data-tip={TIPS.deletePanel}
                     onClick={async () => {
                       await api.deletePanel(panel.id);
                       setPanels((all) => all.filter((p) => p.id !== panel.id));
@@ -285,6 +296,7 @@ function PanelEditor({
         onBlur={() => void commit({ ...content, markdown: String(content.markdown || "") })}
         placeholder="Write markdown…"
         disabled={!canEdit}
+        data-tip={TIPS.panelText}
       />
     );
   }
@@ -333,6 +345,7 @@ function PanelEditor({
         {canEdit && (
           <button
             type="button"
+            data-tip={TIPS.addAttrRow}
             onClick={() => {
               const next = { ...content, items: [...items, { key: "", value: "" }] };
               void commit(next);
@@ -378,6 +391,7 @@ function PanelEditor({
         {canEdit && (
           <button
             type="button"
+            data-tip={TIPS.addListItem}
             onClick={() => {
               const next = { ...content, items: [...items, ""] };
               void commit(next);
@@ -430,6 +444,7 @@ function PanelEditor({
         {canEdit && (
           <button
             type="button"
+            data-tip={TIPS.addTableRow}
             onClick={() => {
               const next = {
                 ...content,
@@ -458,6 +473,7 @@ function PanelEditor({
                   value={img.caption || ""}
                   placeholder="Caption"
                   disabled={!canEdit}
+                  data-tip={TIPS.imageCaption}
                   onChange={(e) => {
                     const next = images.slice();
                     next[i] = { ...img, caption: e.target.value };
@@ -469,6 +485,7 @@ function PanelEditor({
                   <button
                     type="button"
                     className="ghost"
+                    data-tip={TIPS.removeImage}
                     onClick={() => {
                       const next = {
                         ...content,
@@ -486,7 +503,7 @@ function PanelEditor({
         </div>
         {canEdit && (
           <div className="row" style={{ flexWrap: "wrap" }}>
-            <label className="buttonish">
+            <label className="buttonish" data-tip={TIPS.uploadImage}>
               Upload image
               <input
                 type="file"
@@ -506,6 +523,7 @@ function PanelEditor({
             </label>
             <button
               type="button"
+              data-tip={TIPS.addImageUrl}
               onClick={() => {
                 const url = prompt("Image URL");
                 if (!url) return;
@@ -529,6 +547,7 @@ function PanelEditor({
       <textarea
         value={(content.element_ids as string[] | undefined)?.join("\n") || ""}
         disabled={!canEdit}
+        data-tip={TIPS.panelLinks}
         onChange={(e) =>
           onChange({
             ...content,

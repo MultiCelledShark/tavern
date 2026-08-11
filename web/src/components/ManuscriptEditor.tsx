@@ -3,6 +3,7 @@ import StarterKit from "@tiptap/starter-kit";
 import Placeholder from "@tiptap/extension-placeholder";
 import { useEffect, useState } from "react";
 import { api, Element } from "../api/client";
+import { TIPS } from "../tips";
 
 export default function ManuscriptEditor({
   element,
@@ -72,11 +73,16 @@ export default function ManuscriptEditor({
             if (title !== element.title) onRenamed(title);
           }}
           style={{ fontFamily: "var(--font-display)", fontSize: "1.35rem", fontWeight: 700, maxWidth: 360 }}
+          data-tip={TIPS.msTitle}
         />
-        <button className={sourceMode ? "primary" : ""} onClick={() => setSourceMode((s) => !s)}>
+        <button
+          className={sourceMode ? "primary" : ""}
+          data-tip={TIPS.msSource}
+          onClick={() => setSourceMode((s) => !s)}
+        >
           {sourceMode ? "WYSIWYG" : "Source"}
         </button>
-        <label className="row muted">
+        <label className="row muted" data-tip={TIPS.msGoal}>
           Goal
           <input
             type="number"
@@ -88,11 +94,11 @@ export default function ManuscriptEditor({
             }}
           />
         </label>
-        <span className="muted">
+        <span className="muted" data-tip={TIPS.msWords}>
           {wordCount}
           {wordGoal ? ` / ${wordGoal}` : ""} words
         </span>
-        <button className="primary" onClick={save}>
+        <button className="primary" data-tip={TIPS.msSave} onClick={save}>
           {saved ? "Saved" : "Save"}
         </button>
       </div>
@@ -102,6 +108,7 @@ export default function ManuscriptEditor({
           className="editor-surface"
           style={{ fontFamily: "var(--font-mono)", minHeight: "60vh" }}
           value={markdown}
+          data-tip={TIPS.msEditor}
           onChange={(e) => {
             setMarkdown(e.target.value);
             setWordCount(e.target.value.split(/\s+/).filter(Boolean).length);
@@ -109,7 +116,7 @@ export default function ManuscriptEditor({
           }}
         />
       ) : (
-        <div className="editor-surface">
+        <div className="editor-surface" data-tip={TIPS.msEditor}>
           <EditorContent editor={editor} />
         </div>
       )}
@@ -121,6 +128,7 @@ export default function ManuscriptEditor({
             key={s.id}
             className="ghost"
             style={{ marginRight: 4 }}
+            data-tip={TIPS.msQuickLink}
             onClick={() => {
               const token = `[[${capitalize(s.module_type)}:${s.title}]]`;
               if (sourceMode) {
