@@ -6,12 +6,14 @@ Inspired by Campfire’s layout concepts; original code and UI. Not affiliated w
 
 ## Features (v1)
 
-- **Modules:** Manuscript, Characters, Encyclopedia, Relationships, Locations, Systems (Magic/Tech)
+- **Modules:** Manuscript, Characters, Encyclopedia, Relationships, Locations, Systems (Magic/Tech), Maps, Timeline
 - **Panel engine:** attributes, text, list, stats, image, table, links — drag/resize canvas
 - **Manuscript:** TipTap editor, source mode, corkboard, word goals, wiki-link helpers
 - **Relationships:** React Flow graph backed by element links
+- **Maps / Timeline:** image maps with location pins; chronological event rail
 - **Export:** Markdown / DOCX / EPUB / PDF / HTML (via pandoc) + `.tavern` backups
 - **Import:** Intermediate JSON, ZIP scans, Campfire HTML Export Server dumps; unknown binaries → encyclopedia stubs
+- **Assets:** project image upload for panels and map backgrounds
 - **Multi-user:** Argon2 sessions, project grants (owner / editor / viewer)
 
 ## Quick start

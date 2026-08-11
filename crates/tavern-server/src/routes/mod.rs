@@ -86,6 +86,14 @@ pub fn router() -> Router<Arc<AppState>> {
             "/api/projects/{id}/backup",
             post(backup_project),
         )
+        .route(
+            "/api/projects/{id}/assets",
+            get(list_assets).post(upload_asset),
+        )
+        .route(
+            "/api/projects/{id}/assets/{name}",
+            get(get_asset).delete(delete_asset),
+        )
         .route("/api/import", post(import_project))
         .route("/api/modules", get(list_modules))
         .route("/", get(index))
@@ -872,6 +880,132 @@ async fn backup_project(
         bytes,
     )
         .into_response())
+}
+
+#[derive(Serialize)]
+struct AssetInfo {
+    name: String,
+    url: String,
+    size: u64,
+}
+
+fn safe_asset_name(original: &str) -> Result<String, ApiError> {
+    let ext = std::path::Path::new(original)
+        .extension()
+        .and_then(|e| e.to_str())
+        .unwrap_or("bin")
+        .to_ascii_lowercase();
+    let allowed = ["png", "jpg", "jpeg", "webp", "gif", "svg"];
+    if !allowed.contains(&ext.as_str()) {
+        return Err(ApiError::bad("only image uploads (png/jpg/webp/gif/svg)"));
+    }
+    Ok(format!("{}.{}", Uuid::new_v4(), ext))
+}
+
+async fn list_assets(
+    AuthUser(user): AuthUser,
+    State(state): State<Arc<AppState>>,
+    Path(id): Path<Uuid>,
+) -> Result<Json<Vec<AssetInfo>>, ApiError> {
+    require_access(&state, &user, id).await?;
+    let dir = state.config.project_assets_dir(id);
+    let mut out = Vec::new();
+    if dir.is_dir() {
+        for entry in std::fs::read_dir(&dir)? {
+            let entry = entry?;
+            let meta = entry.metadata()?;
+            if !meta.is_file() {
+                continue;
+            }
+            let name = entry.file_name().to_string_lossy().to_string();
+            if name.starts_with('.') {
+                continue;
+            }
+            out.push(AssetInfo {
+                url: format!("/api/projects/{id}/assets/{name}"),
+                name,
+                size: meta.len(),
+            });
+        }
+    }
+    out.sort_by(|a, b| a.name.cmp(&b.name));
+    Ok(Json(out))
+}
+
+async fn upload_asset(
+    AuthUser(user): AuthUser,
+    State(state): State<Arc<AppState>>,
+    Path(id): Path<Uuid>,
+    mut multipart: Multipart,
+) -> Result<(StatusCode, Json<AssetInfo>), ApiError> {
+    require_edit(&state, &user, id).await?;
+    let dir = state.config.project_assets_dir(id);
+    std::fs::create_dir_all(&dir)?;
+
+    let mut stored: Option<AssetInfo> = None;
+    while let Some(field) = multipart
+        .next_field()
+        .await
+        .map_err(|e| ApiError::bad(&e.to_string()))?
+    {
+        if field.name() != Some("file") {
+            continue;
+        }
+        let original = field
+            .file_name()
+            .map(|s| s.to_string())
+            .unwrap_or_else(|| "upload.bin".into());
+        let name = safe_asset_name(&original)?;
+        let bytes = field
+            .bytes()
+            .await
+            .map_err(|e| ApiError::bad(&e.to_string()))?;
+        if bytes.len() > 12 * 1024 * 1024 {
+            return Err(ApiError::bad("file too large (max 12MB)"));
+        }
+        let path = dir.join(&name);
+        std::fs::write(&path, &bytes)?;
+        stored = Some(AssetInfo {
+            name: name.clone(),
+            url: format!("/api/projects/{id}/assets/{name}"),
+            size: bytes.len() as u64,
+        });
+    }
+    let info = stored.ok_or(ApiError::bad("missing file field"))?;
+    Ok((StatusCode::CREATED, Json(info)))
+}
+
+async fn get_asset(
+    AuthUser(user): AuthUser,
+    State(state): State<Arc<AppState>>,
+    Path((id, name)): Path<(Uuid, String)>,
+) -> Result<Response, ApiError> {
+    require_access(&state, &user, id).await?;
+    if name.contains("..") || name.contains('/') || name.contains('\\') {
+        return Err(ApiError::bad("invalid asset name"));
+    }
+    let path = state.config.project_assets_dir(id).join(&name);
+    let bytes = std::fs::read(&path).map_err(|_| ApiError::not_found("asset"))?;
+    let mime = mime_guess::from_path(&path)
+        .first_or_octet_stream()
+        .to_string();
+    Ok(([(header::CONTENT_TYPE, mime)], bytes).into_response())
+}
+
+async fn delete_asset(
+    AuthUser(user): AuthUser,
+    State(state): State<Arc<AppState>>,
+    Path((id, name)): Path<(Uuid, String)>,
+) -> Result<StatusCode, ApiError> {
+    require_edit(&state, &user, id).await?;
+    if name.contains("..") || name.contains('/') || name.contains('\\') {
+        return Err(ApiError::bad("invalid asset name"));
+    }
+    let path = state.config.project_assets_dir(id).join(&name);
+    if path.is_file() {
+        std::fs::remove_file(&path)?;
+    }
+    Ok(StatusCode::NO_CONTENT)
 }
 
 async fn import_project(

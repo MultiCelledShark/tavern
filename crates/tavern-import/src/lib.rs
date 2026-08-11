@@ -344,7 +344,9 @@ fn map_module_name(name: &str) -> Option<&'static str> {
         "relationship" | "relationships" => Some("relationship"),
         "location" | "locations" => Some("location"),
         "systems" | "magic" | "tech" | "technology" => Some("systems"),
-        "timeline" | "maps" | "calendar" | "languages" | "arcs" | "research" | "species"
+        "maps" | "map" => Some("maps"),
+        "timeline" | "timelines" | "events" => Some("timeline"),
+        "calendar" | "languages" | "arcs" | "research" | "species"
         | "cultures" | "religions" | "philosophies" | "items" => None,
         _ => None,
     }

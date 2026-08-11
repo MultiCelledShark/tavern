@@ -20,7 +20,9 @@ export type ModuleType =
   | "encyclopedia"
   | "relationship"
   | "location"
-  | "systems";
+  | "systems"
+  | "maps"
+  | "timeline";
 
 export type Element = {
   id: string;
@@ -70,6 +72,12 @@ export type ProjectGrant = {
   user_id: string;
   role: string;
   username?: string;
+};
+
+export type AssetInfo = {
+  name: string;
+  url: string;
+  size: number;
 };
 
 async function req<T>(path: string, init?: RequestInit): Promise<T> {
@@ -186,6 +194,20 @@ export const api = {
     }),
   deleteGrant: (projectId: string, userId: string) =>
     req<void>(`/api/projects/${projectId}/grants/${userId}`, { method: "DELETE" }),
+  listAssets: (projectId: string) => req<AssetInfo[]>(`/api/projects/${projectId}/assets`),
+  uploadAsset: async (projectId: string, file: File) => {
+    const fd = new FormData();
+    fd.append("file", file);
+    return req<AssetInfo>(`/api/projects/${projectId}/assets`, {
+      method: "POST",
+      body: fd,
+      headers: {},
+    });
+  },
+  deleteAsset: (projectId: string, name: string) =>
+    req<void>(`/api/projects/${projectId}/assets/${encodeURIComponent(name)}`, {
+      method: "DELETE",
+    }),
   exportProject: async (projectId: string, format: string, kind = "manuscript") => {
     const res = await fetch(`/api/projects/${projectId}/export`, {
       method: "POST",
@@ -221,4 +243,6 @@ export const MODULES: { id: ModuleType; label: string }[] = [
   { id: "relationship", label: "Relationships" },
   { id: "location", label: "Locations" },
   { id: "systems", label: "Systems" },
+  { id: "maps", label: "Maps" },
+  { id: "timeline", label: "Timeline" },
 ];

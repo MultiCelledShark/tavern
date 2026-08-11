@@ -16,8 +16,10 @@
 
 - [ ] ~~Real Campfire proprietary backup reverse-engineering (`.camp` / opaque desktop backups)~~ — **dropped**. Campfire only documents local project backup on the **desktop app** (`File → Download Project Backup`). Web/Android users don’t get that file; supported Campfire ingress is the HTML export path already implemented.
 
-## Next
+## In progress / next
 
-- [ ] Interactive maps / timeline modules
-- [ ] Asset upload UI for image panels
+- [x] UX polish (focus mode, responsive panel grid, image panel previews)
+- [x] Asset upload UI for image panels (+ map backgrounds)
+- [x] Interactive maps module (image + pins linked to locations)
+- [x] Timeline module (dated events + detail panels)
 - [ ] Albion nginx cutover

@@ -81,6 +81,8 @@ pub enum ModuleType {
     Relationship,
     Location,
     Systems,
+    Maps,
+    Timeline,
 }
 
 impl ModuleType {
@@ -92,6 +94,8 @@ impl ModuleType {
             Self::Relationship => "relationship",
             Self::Location => "location",
             Self::Systems => "systems",
+            Self::Maps => "maps",
+            Self::Timeline => "timeline",
         }
     }
 
@@ -103,6 +107,8 @@ impl ModuleType {
             "relationship" => Some(Self::Relationship),
             "location" => Some(Self::Location),
             "systems" => Some(Self::Systems),
+            "maps" | "map" => Some(Self::Maps),
+            "timeline" | "timelines" => Some(Self::Timeline),
             _ => None,
         }
     }
@@ -115,6 +121,8 @@ impl ModuleType {
             Self::Relationship,
             Self::Location,
             Self::Systems,
+            Self::Maps,
+            Self::Timeline,
         ]
     }
 }
@@ -393,6 +401,23 @@ pub fn default_template_pages(module: ModuleType) -> serde_json::Value {
                 {"panel_type": "text", "title": "Rules", "content": {"markdown": ""}},
                 {"panel_type": "stats", "title": "Metrics", "content": {"items": []}},
                 {"panel_type": "table", "title": "Examples", "content": {"headers": ["Name", "Effect"], "rows": []}}
+            ]
+        }]),
+        ModuleType::Maps => serde_json::json!([{
+            "title": "Legend",
+            "panels": [
+                {"panel_type": "text", "title": "Notes", "content": {"markdown": ""}},
+                {"panel_type": "list", "title": "Regions", "content": {"items": []}}
+            ]
+        }]),
+        ModuleType::Timeline => serde_json::json!([{
+            "title": "Event",
+            "panels": [
+                {"panel_type": "attributes", "title": "When", "content": {"items": [
+                    {"key": "Date", "value": ""},
+                    {"key": "Era", "value": ""}
+                ]}},
+                {"panel_type": "text", "title": "What happened", "content": {"markdown": ""}}
             ]
         }]),
     }

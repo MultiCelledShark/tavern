@@ -85,14 +85,32 @@ export default function ProjectsPage({
 
         <div className="project-grid">
           {projects.map((p) => (
-            <Link key={p.id} to={`/project/${p.id}`} style={{ textDecoration: "none", color: "inherit" }}>
-              <div className="project-card">
+            <div key={p.id} className="project-card">
+              <Link to={`/project/${p.id}`} style={{ textDecoration: "none", color: "inherit" }}>
                 <h3 style={{ margin: "0 0 0.35rem" }}>{p.title}</h3>
                 <p className="muted" style={{ margin: 0 }}>
                   {p.synopsis || "No synopsis yet"}
                 </p>
+              </Link>
+              <div className="row" style={{ marginTop: "0.75rem" }}>
+                <Link to={`/project/${p.id}`}>
+                  <button type="button" className="primary">
+                    Open
+                  </button>
+                </Link>
+                <button
+                  type="button"
+                  className="danger"
+                  onClick={async () => {
+                    if (!confirm(`Delete project “${p.title}”?`)) return;
+                    await api.deleteProject(p.id);
+                    await refresh();
+                  }}
+                >
+                  Delete
+                </button>
               </div>
-            </Link>
+            </div>
           ))}
         </div>
       </div>

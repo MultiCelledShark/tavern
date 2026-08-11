@@ -13,6 +13,8 @@ import {
 import PanelCanvas from "../components/PanelCanvas";
 import ManuscriptEditor from "../components/ManuscriptEditor";
 import RelationshipGraph from "../components/RelationshipGraph";
+import MapCanvas from "../components/MapCanvas";
+import TimelineView from "../components/TimelineView";
 
 export default function ProjectWorkspace({
   user,
@@ -38,6 +40,11 @@ export default function ProjectWorkspace({
   const selected = useMemo(
     () => elements.find((e) => e.id === selectedId) || null,
     [elements, selectedId]
+  );
+
+  const locations = useMemo(
+    () => allElements.filter((e) => e.module_type === "location"),
+    [allElements]
   );
 
   const refreshElements = useCallback(async () => {
@@ -67,11 +74,21 @@ export default function ProjectWorkspace({
   }, [module, projectId]); // eslint-disable-line react-hooks/exhaustive-deps
 
   async function createElement() {
-    const title = newTitle.trim() || `New ${module}`;
+    const title =
+      newTitle.trim() ||
+      (module === "timeline" ? "New event" : module === "maps" ? "New map" : `New ${module}`);
+    const metadata =
+      module === "systems"
+        ? { kind: "magic" }
+        : module === "timeline"
+          ? { date: "", date_label: "" }
+          : module === "maps"
+            ? { background_url: "", pins: [] }
+            : {};
     const el = await api.createElement(projectId, {
       module_type: module,
       title,
-      metadata: module === "systems" ? { kind: "magic" } : {},
+      metadata,
     });
     setNewTitle("");
     await refreshElements();
@@ -87,6 +104,9 @@ export default function ProjectWorkspace({
     a.click();
     URL.revokeObjectURL(url);
   }
+
+  const createLabel =
+    module === "timeline" ? "Event" : module === "maps" ? "Map" : "Title";
 
   return (
     <div className={`app-shell${focus ? " focus-mode" : ""}`}>
@@ -149,7 +169,7 @@ export default function ProjectWorkspace({
       <aside className="element-list">
         <header>
           <input
-            placeholder="Title"
+            placeholder={createLabel}
             value={newTitle}
             onChange={(e) => setNewTitle(e.target.value)}
           />
@@ -163,6 +183,11 @@ export default function ProjectWorkspace({
               Corkboard
             </button>
           </div>
+        )}
+        {module === "relationship" && (
+          <p className="muted" style={{ padding: "0.5rem 0.75rem", margin: 0, fontSize: "0.9rem" }}>
+            Graph uses Characters. Optional relationship notes live in the list.
+          </p>
         )}
         <ul>
           {elements.map((el) => (
@@ -180,7 +205,49 @@ export default function ProjectWorkspace({
 
       <main className="main-canvas">
         {error && <p className="error">{error}</p>}
-        {!selected && <p className="muted">Create or select an element.</p>}
+
+        {module === "relationship" && (
+          <RelationshipGraph
+            projectId={projectId}
+            elements={allElements.filter((e) => e.module_type === "character")}
+            links={links}
+            onChange={async () => setLinks(await api.links(projectId))}
+          />
+        )}
+
+        {module === "maps" && selected && (
+          <MapCanvas
+            projectId={projectId}
+            element={selected}
+            locations={locations}
+            canEdit
+            onSaved={async () => {
+              await refreshElements();
+              setAllElements(await api.elements(projectId));
+            }}
+          />
+        )}
+        {module === "maps" && !selected && (
+          <p className="muted">Create or select a map.</p>
+        )}
+
+        {module === "timeline" && (
+          <TimelineView
+            projectId={projectId}
+            elements={elements}
+            selectedId={selectedId}
+            onSelect={setSelectedId}
+            canEdit
+            onChanged={async () => {
+              await refreshElements();
+              setAllElements(await api.elements(projectId));
+            }}
+          />
+        )}
+
+        {module === "manuscript" && !selected && !corkboard && (
+          <p className="muted">Create or select an element.</p>
+        )}
         {selected && module === "manuscript" && !corkboard && (
           <ManuscriptEditor
             element={selected}
@@ -196,7 +263,7 @@ export default function ProjectWorkspace({
             }}
           />
         )}
-        {selected && module === "manuscript" && corkboard && (
+        {module === "manuscript" && corkboard && (
           <div className="corkboard">
             {elements.map((el) => (
               <button
@@ -213,29 +280,34 @@ export default function ProjectWorkspace({
             ))}
           </div>
         )}
-        {selected && module === "relationship" && (
-          <RelationshipGraph
-            projectId={projectId}
-            elements={allElements.filter((e) => e.module_type === "character")}
-            links={links}
-            onChange={async () => setLinks(await api.links(projectId))}
-          />
-        )}
-        {selected && module !== "manuscript" && module !== "relationship" && (
-          <PanelCanvas
-            element={selected}
-            canEdit
-            onTitle={async (title) => {
-              await api.updateElement(selected.id, {
-                title,
-                parent_id: selected.parent_id,
-                sort_order: selected.sort_order,
-                metadata: selected.metadata,
-              });
-              await refreshElements();
-            }}
-          />
-        )}
+
+        {selected &&
+          module !== "manuscript" &&
+          module !== "relationship" &&
+          module !== "maps" &&
+          module !== "timeline" && (
+            <PanelCanvas
+              projectId={projectId}
+              element={selected}
+              canEdit
+              onTitle={async (title) => {
+                await api.updateElement(selected.id, {
+                  title,
+                  parent_id: selected.parent_id,
+                  sort_order: selected.sort_order,
+                  metadata: selected.metadata,
+                });
+                await refreshElements();
+              }}
+            />
+          )}
+        {!selected &&
+          module !== "manuscript" &&
+          module !== "relationship" &&
+          module !== "maps" &&
+          module !== "timeline" && (
+            <p className="muted">Create or select an element.</p>
+          )}
       </main>
 
       <aside className="inspector">
@@ -269,7 +341,17 @@ export default function ProjectWorkspace({
         <ul style={{ paddingLeft: "1.1rem" }}>
           {grants.map((g) => (
             <li key={g.user_id}>
-              {g.username || g.user_id} · {g.role}
+              {g.username || g.user_id} · {g.role}{" "}
+              <button
+                className="ghost"
+                style={{ padding: "0.1rem 0.35rem" }}
+                onClick={async () => {
+                  await api.deleteGrant(projectId, g.user_id);
+                  setGrants(await api.grants(projectId));
+                }}
+              >
+                ×
+              </button>
             </li>
           ))}
         </ul>

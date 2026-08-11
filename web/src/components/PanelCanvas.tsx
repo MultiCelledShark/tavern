@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import GridLayout, { Layout } from "react-grid-layout";
 import "react-grid-layout/css/styles.css";
 import "react-resizable/css/styles.css";
@@ -14,11 +14,15 @@ const PANEL_TYPES = [
   "links",
 ] as const;
 
+type ImageRef = { url: string; caption?: string };
+
 export default function PanelCanvas({
+  projectId,
   element,
   canEdit,
   onTitle,
 }: {
+  projectId: string;
   element: Element;
   canEdit: boolean;
   onTitle: (title: string) => Promise<void>;
@@ -28,6 +32,7 @@ export default function PanelCanvas({
   const [panels, setPanels] = useState<Panel[]>([]);
   const [title, setTitle] = useState(element.title);
   const [width, setWidth] = useState(900);
+  const canvasRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     setTitle(element.title);
@@ -48,10 +53,13 @@ export default function PanelCanvas({
   }, [pageId]);
 
   useEffect(() => {
-    const onResize = () => setWidth(Math.max(640, window.innerWidth - 780));
-    onResize();
-    window.addEventListener("resize", onResize);
-    return () => window.removeEventListener("resize", onResize);
+    const el = canvasRef.current;
+    if (!el) return;
+    const apply = () => setWidth(Math.max(320, Math.floor(el.clientWidth)));
+    apply();
+    const ro = new ResizeObserver(apply);
+    ro.observe(el);
+    return () => ro.disconnect();
   }, []);
 
   const layout: Layout[] = useMemo(
@@ -80,7 +88,7 @@ export default function PanelCanvas({
 
   return (
     <div>
-      <div className="row" style={{ marginBottom: "0.85rem" }}>
+      <div className="row" style={{ marginBottom: "0.85rem", flexWrap: "wrap" }}>
         <input
           value={title}
           onChange={(e) => setTitle(e.target.value)}
@@ -138,7 +146,7 @@ export default function PanelCanvas({
         )}
       </div>
 
-      <div className="panel-canvas">
+      <div className="panel-canvas" ref={canvasRef}>
         <GridLayout
           className="layout"
           layout={layout}
@@ -180,19 +188,23 @@ export default function PanelCanvas({
                   style={{ border: "none", background: "transparent", padding: 0 }}
                 />
                 <div className="spacer" />
-                <button
-                  className="ghost"
-                  onClick={async () => {
-                    await api.deletePanel(panel.id);
-                    setPanels((all) => all.filter((p) => p.id !== panel.id));
-                  }}
-                >
-                  ×
-                </button>
+                {canEdit && (
+                  <button
+                    className="ghost"
+                    onClick={async () => {
+                      await api.deletePanel(panel.id);
+                      setPanels((all) => all.filter((p) => p.id !== panel.id));
+                    }}
+                  >
+                    ×
+                  </button>
+                )}
               </div>
               <div className="panel-body">
                 <PanelEditor
+                  projectId={projectId}
                   panel={panel}
+                  canEdit={canEdit}
                   onChange={(content) =>
                     setPanels((all) =>
                       all.map((p) => (p.id === panel.id ? { ...p, content } : p))
@@ -230,11 +242,15 @@ function defaultContent(type: string): Record<string, unknown> {
 }
 
 function PanelEditor({
+  projectId,
   panel,
+  canEdit,
   onChange,
   onSave,
 }: {
+  projectId: string;
   panel: Panel;
+  canEdit: boolean;
   onChange: (c: Record<string, unknown>) => void;
   onSave: () => void;
 }) {
@@ -247,6 +263,7 @@ function PanelEditor({
         onChange={(e) => onChange({ ...content, markdown: e.target.value })}
         onBlur={onSave}
         placeholder="Write markdown…"
+        disabled={!canEdit}
       />
     );
   }
@@ -260,6 +277,7 @@ function PanelEditor({
             <input
               placeholder="Key"
               value={item.key}
+              disabled={!canEdit}
               onChange={(e) => {
                 const next = items.slice();
                 next[i] = { ...item, key: e.target.value };
@@ -270,6 +288,7 @@ function PanelEditor({
             <input
               placeholder="Value"
               value={item.value}
+              disabled={!canEdit}
               onChange={(e) => {
                 const next = items.slice();
                 next[i] = { ...item, value: e.target.value };
@@ -277,24 +296,28 @@ function PanelEditor({
               }}
               onBlur={onSave}
             />
-            <button
-              onClick={() => {
-                onChange({ ...content, items: items.filter((_, j) => j !== i) });
-                setTimeout(onSave, 0);
-              }}
-            >
-              ×
-            </button>
+            {canEdit && (
+              <button
+                onClick={() => {
+                  onChange({ ...content, items: items.filter((_, j) => j !== i) });
+                  setTimeout(onSave, 0);
+                }}
+              >
+                ×
+              </button>
+            )}
           </div>
         ))}
-        <button
-          onClick={() => {
-            onChange({ ...content, items: [...items, { key: "", value: "" }] });
-            setTimeout(onSave, 0);
-          }}
-        >
-          Add row
-        </button>
+        {canEdit && (
+          <button
+            onClick={() => {
+              onChange({ ...content, items: [...items, { key: "", value: "" }] });
+              setTimeout(onSave, 0);
+            }}
+          >
+            Add row
+          </button>
+        )}
       </div>
     );
   }
@@ -307,6 +330,7 @@ function PanelEditor({
           <div className="list-row" key={i}>
             <input
               value={item}
+              disabled={!canEdit}
               onChange={(e) => {
                 const next = items.slice();
                 next[i] = e.target.value;
@@ -315,24 +339,28 @@ function PanelEditor({
               onBlur={onSave}
               style={{ gridColumn: "1 / 3" }}
             />
-            <button
-              onClick={() => {
-                onChange({ ...content, items: items.filter((_, j) => j !== i) });
-                setTimeout(onSave, 0);
-              }}
-            >
-              ×
-            </button>
+            {canEdit && (
+              <button
+                onClick={() => {
+                  onChange({ ...content, items: items.filter((_, j) => j !== i) });
+                  setTimeout(onSave, 0);
+                }}
+              >
+                ×
+              </button>
+            )}
           </div>
         ))}
-        <button
-          onClick={() => {
-            onChange({ ...content, items: [...items, ""] });
-            setTimeout(onSave, 0);
-          }}
-        >
-          Add item
-        </button>
+        {canEdit && (
+          <button
+            onClick={() => {
+              onChange({ ...content, items: [...items, ""] });
+              setTimeout(onSave, 0);
+            }}
+          >
+            Add item
+          </button>
+        )}
       </div>
     );
   }
@@ -347,6 +375,7 @@ function PanelEditor({
             <input
               key={i}
               value={h}
+              disabled={!canEdit}
               onChange={(e) => {
                 const next = headers.slice();
                 next[i] = e.target.value;
@@ -362,6 +391,7 @@ function PanelEditor({
               <input
                 key={ci}
                 value={cell}
+                disabled={!canEdit}
                 onChange={(e) => {
                   const next = rows.map((r) => r.slice());
                   next[ri][ci] = e.target.value;
@@ -372,35 +402,99 @@ function PanelEditor({
             ))}
           </div>
         ))}
-        <button
-          onClick={() => {
-            onChange({
-              ...content,
-              rows: [...rows, headers.map(() => "")],
-            });
-            setTimeout(onSave, 0);
-          }}
-        >
-          Add row
-        </button>
+        {canEdit && (
+          <button
+            onClick={() => {
+              onChange({
+                ...content,
+                rows: [...rows, headers.map(() => "")],
+              });
+              setTimeout(onSave, 0);
+            }}
+          >
+            Add row
+          </button>
+        )}
       </div>
     );
   }
 
   if (panel.panel_type === "image") {
+    const images = (content.images as ImageRef[]) || [];
     return (
-      <textarea
-        value={JSON.stringify(content.images || [], null, 2)}
-        onChange={(e) => {
-          try {
-            onChange({ ...content, images: JSON.parse(e.target.value) });
-          } catch {
-            /* ignore while typing */
-          }
-        }}
-        onBlur={onSave}
-        placeholder='JSON array of image refs, e.g. [{"url":"...","caption":""}]'
-      />
+      <div className="image-panel stack">
+        <div className="image-grid">
+          {images.map((img, i) => (
+            <figure key={`${img.url}-${i}`} className="image-thumb">
+              <img src={img.url} alt={img.caption || ""} />
+              <figcaption>
+                <input
+                  value={img.caption || ""}
+                  placeholder="Caption"
+                  disabled={!canEdit}
+                  onChange={(e) => {
+                    const next = images.slice();
+                    next[i] = { ...img, caption: e.target.value };
+                    onChange({ ...content, images: next });
+                  }}
+                  onBlur={onSave}
+                />
+                {canEdit && (
+                  <button
+                    className="ghost"
+                    onClick={() => {
+                      onChange({
+                        ...content,
+                        images: images.filter((_, j) => j !== i),
+                      });
+                      setTimeout(onSave, 0);
+                    }}
+                  >
+                    Remove
+                  </button>
+                )}
+              </figcaption>
+            </figure>
+          ))}
+        </div>
+        {canEdit && (
+          <div className="row" style={{ flexWrap: "wrap" }}>
+            <label className="buttonish">
+              Upload image
+              <input
+                type="file"
+                accept="image/png,image/jpeg,image/webp,image/gif,image/svg+xml"
+                hidden
+                onChange={async (e) => {
+                  const file = e.target.files?.[0];
+                  e.target.value = "";
+                  if (!file) return;
+                  const asset = await api.uploadAsset(projectId, file);
+                  onChange({
+                    ...content,
+                    images: [...images, { url: asset.url, caption: "" }],
+                  });
+                  setTimeout(onSave, 0);
+                }}
+              />
+            </label>
+            <button
+              onClick={() => {
+                const url = prompt("Image URL");
+                if (!url) return;
+                onChange({
+                  ...content,
+                  images: [...images, { url, caption: "" }],
+                });
+                setTimeout(onSave, 0);
+              }}
+            >
+              Add URL
+            </button>
+          </div>
+        )}
+        {images.length === 0 && <p className="muted">No images yet.</p>}
+      </div>
     );
   }
 
@@ -408,6 +502,7 @@ function PanelEditor({
     return (
       <textarea
         value={(content.element_ids as string[] | undefined)?.join("\n") || ""}
+        disabled={!canEdit}
         onChange={(e) =>
           onChange({
             ...content,
@@ -426,6 +521,7 @@ function PanelEditor({
   return (
     <textarea
       value={JSON.stringify(content, null, 2)}
+      disabled={!canEdit}
       onChange={(e) => {
         try {
           onChange(JSON.parse(e.target.value));
