@@ -29,4 +29,6 @@ server {
 
 ## Homelab notes
 
-Keep LAN IPs, hostnames, and domain-specific nginx snippets in your Forgejo wiki or a **gitignored** `docs/homelab.md`. Do not push those details to GitHub.
+Keep LAN IPs, hostnames, and domain-specific nginx snippets in your Forgejo wiki or a **gitignored** `docs/homelab.md` (start from `docs/homelab.md.example`). Do not push those details to GitHub.
+
+For the tracked cutover sequence (build → systemd → data migrate → nginx → rollback), see [docs/DEBIAN_CUTOVER.md](../../docs/DEBIAN_CUTOVER.md). Update that watch list when uploads, listen defaults, or cookie/proxy env vars change.

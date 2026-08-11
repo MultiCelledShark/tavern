@@ -48,7 +48,7 @@ See [docs/REMOTES.md](docs/REMOTES.md) for push workflow.
 
 ## Deploy
 
-See [deploy/debian/README.md](deploy/debian/README.md).
+See [deploy/debian/README.md](deploy/debian/README.md). Debian/nginx cutover plan (not executed yet): [docs/DEBIAN_CUTOVER.md](docs/DEBIAN_CUTOVER.md).
 
 ## License
 

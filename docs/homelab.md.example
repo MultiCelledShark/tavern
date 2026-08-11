@@ -1,0 +1,28 @@
+# Homelab cutover notes (private)
+
+Copy to `docs/homelab.md` (gitignored) and fill in. Never commit the filled file.
+
+## Host
+
+- SSH target / alias:
+- OS / Debian version:
+- App data path on server: `/var/lib/tavern`
+
+## TLS / nginx
+
+- Public hostname:
+- Cert source (e.g. ACME / existing):
+- nginx site file path:
+- `client_max_body_size`: `16m`
+
+## Cutover choices
+
+- [ ] Migrate existing project `data/` from current host
+- [ ] Fresh empty data dir
+- Pandoc installed: yes / no
+- Old `:8084` listener shut down after cutover: yes / no
+
+## Backup
+
+- Pre-cutover tarball location:
+- Rollback binary SHA:
