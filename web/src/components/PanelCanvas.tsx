@@ -226,7 +226,12 @@ export default function PanelCanvas({
                       all.map((p) => (p.id === panel.id ? { ...p, content } : p))
                     )
                   }
-                  onSave={() => persistPanel(panel, { content: panel.content })}
+                  commit={(content) => {
+                    setPanels((all) =>
+                      all.map((p) => (p.id === panel.id ? { ...p, content } : p))
+                    );
+                    return persistPanel(panel, { content });
+                  }}
                 />
               </div>
             </div>
@@ -262,13 +267,13 @@ function PanelEditor({
   panel,
   canEdit,
   onChange,
-  onSave,
+  commit,
 }: {
   projectId: string;
   panel: Panel;
   canEdit: boolean;
   onChange: (c: Record<string, unknown>) => void;
-  onSave: () => void;
+  commit: (c: Record<string, unknown>) => void | Promise<void>;
 }) {
   const content = panel.content;
 
@@ -277,7 +282,7 @@ function PanelEditor({
       <textarea
         value={String(content.markdown || "")}
         onChange={(e) => onChange({ ...content, markdown: e.target.value })}
-        onBlur={onSave}
+        onBlur={() => void commit({ ...content, markdown: String(content.markdown || "") })}
         placeholder="Write markdown…"
         disabled={!canEdit}
       />
@@ -299,7 +304,7 @@ function PanelEditor({
                 next[i] = { ...item, key: e.target.value };
                 onChange({ ...content, items: next });
               }}
-              onBlur={onSave}
+              onBlur={() => void commit(content)}
             />
             <input
               placeholder="Value"
@@ -310,13 +315,14 @@ function PanelEditor({
                 next[i] = { ...item, value: e.target.value };
                 onChange({ ...content, items: next });
               }}
-              onBlur={onSave}
+              onBlur={() => void commit(content)}
             />
             {canEdit && (
               <button
+                type="button"
                 onClick={() => {
-                  onChange({ ...content, items: items.filter((_, j) => j !== i) });
-                  setTimeout(onSave, 0);
+                  const next = { ...content, items: items.filter((_, j) => j !== i) };
+                  void commit(next);
                 }}
               >
                 ×
@@ -326,9 +332,10 @@ function PanelEditor({
         ))}
         {canEdit && (
           <button
+            type="button"
             onClick={() => {
-              onChange({ ...content, items: [...items, { key: "", value: "" }] });
-              setTimeout(onSave, 0);
+              const next = { ...content, items: [...items, { key: "", value: "" }] };
+              void commit(next);
             }}
           >
             Add row
@@ -352,14 +359,15 @@ function PanelEditor({
                 next[i] = e.target.value;
                 onChange({ ...content, items: next });
               }}
-              onBlur={onSave}
+              onBlur={() => void commit(content)}
               style={{ gridColumn: "1 / 3" }}
             />
             {canEdit && (
               <button
+                type="button"
                 onClick={() => {
-                  onChange({ ...content, items: items.filter((_, j) => j !== i) });
-                  setTimeout(onSave, 0);
+                  const next = { ...content, items: items.filter((_, j) => j !== i) };
+                  void commit(next);
                 }}
               >
                 ×
@@ -369,9 +377,10 @@ function PanelEditor({
         ))}
         {canEdit && (
           <button
+            type="button"
             onClick={() => {
-              onChange({ ...content, items: [...items, ""] });
-              setTimeout(onSave, 0);
+              const next = { ...content, items: [...items, ""] };
+              void commit(next);
             }}
           >
             Add item
@@ -397,7 +406,7 @@ function PanelEditor({
                 next[i] = e.target.value;
                 onChange({ ...content, headers: next });
               }}
-              onBlur={onSave}
+              onBlur={() => void commit(content)}
             />
           ))}
         </div>
@@ -413,19 +422,20 @@ function PanelEditor({
                   next[ri][ci] = e.target.value;
                   onChange({ ...content, rows: next });
                 }}
-                onBlur={onSave}
+                onBlur={() => void commit(content)}
               />
             ))}
           </div>
         ))}
         {canEdit && (
           <button
+            type="button"
             onClick={() => {
-              onChange({
+              const next = {
                 ...content,
                 rows: [...rows, headers.map(() => "")],
-              });
-              setTimeout(onSave, 0);
+              };
+              void commit(next);
             }}
           >
             Add row
@@ -453,17 +463,18 @@ function PanelEditor({
                     next[i] = { ...img, caption: e.target.value };
                     onChange({ ...content, images: next });
                   }}
-                  onBlur={onSave}
+                  onBlur={() => void commit(content)}
                 />
                 {canEdit && (
                   <button
+                    type="button"
                     className="ghost"
                     onClick={() => {
-                      onChange({
+                      const next = {
                         ...content,
                         images: images.filter((_, j) => j !== i),
-                      });
-                      setTimeout(onSave, 0);
+                      };
+                      void commit(next);
                     }}
                   >
                     Remove
@@ -486,23 +497,22 @@ function PanelEditor({
                   e.target.value = "";
                   if (!file) return;
                   const asset = await api.uploadAsset(projectId, file);
-                  onChange({
+                  await commit({
                     ...content,
                     images: [...images, { url: asset.url, caption: "" }],
                   });
-                  setTimeout(onSave, 0);
                 }}
               />
             </label>
             <button
+              type="button"
               onClick={() => {
                 const url = prompt("Image URL");
                 if (!url) return;
-                onChange({
+                void commit({
                   ...content,
                   images: [...images, { url, caption: "" }],
                 });
-                setTimeout(onSave, 0);
               }}
             >
               Add URL
@@ -528,7 +538,7 @@ function PanelEditor({
               .filter(Boolean),
           })
         }
-        onBlur={onSave}
+        onBlur={() => void commit(content)}
         placeholder="One element id per line"
       />
     );
@@ -545,7 +555,7 @@ function PanelEditor({
           /* ignore */
         }
       }}
-      onBlur={onSave}
+      onBlur={() => void commit(content)}
     />
   );
 }
