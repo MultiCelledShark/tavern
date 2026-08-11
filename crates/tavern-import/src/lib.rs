@@ -15,6 +15,8 @@ use tavern_core::{
     PanelLayout,
 };
 
+mod campfire_html;
+
 #[derive(Debug, Clone)]
 pub struct ImportReport {
     pub format: String,
@@ -42,6 +44,11 @@ pub fn load_bytes(bytes: &[u8], filename: Option<&str>) -> Result<(IntermediateP
             unsupported_modules: vec![],
             notes: vec!["Loaded Tavern intermediate JSON".into()],
         };
+        return Ok((normalize_project(project), report));
+    }
+
+    if campfire_html::looks_like_campfire_html(bytes) {
+        let (project, report) = campfire_html::load_campfire_html(bytes, filename)?;
         return Ok((normalize_project(project), report));
     }
 
