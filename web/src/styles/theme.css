@@ -84,14 +84,22 @@ a { color: var(--moss-dark); }
   height: 100%;
 }
 
+/* Side panels are display:none in focus mode, so collapse to a single
+   column — keeping `0 0 1fr 0` would auto-place .main-canvas into a
+   zero-width track and squash the editor against the left edge. */
 .app-shell.focus-mode {
-  grid-template-columns: 0 0 1fr 0;
+  grid-template-columns: minmax(0, 1fr);
 }
 
 .app-shell.focus-mode .module-rail,
 .app-shell.focus-mode .element-list,
 .app-shell.focus-mode .inspector {
   display: none;
+}
+
+.app-shell.focus-mode .main-canvas {
+  grid-column: 1;
+  width: 100%;
 }
 
 .topbar {
