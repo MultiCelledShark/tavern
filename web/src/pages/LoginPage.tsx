@@ -1,0 +1,53 @@
+import { FormEvent, useState } from "react";
+import { api, User } from "../api/client";
+
+export default function LoginPage({ onLogin }: { onLogin: (u: User) => void }) {
+  const [username, setUsername] = useState("");
+  const [password, setPassword] = useState("");
+  const [error, setError] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
+
+  async function submit(e: FormEvent) {
+    e.preventDefault();
+    setBusy(true);
+    setError(null);
+    try {
+      const res = await api.login(username, password);
+      onLogin(res.user);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Login failed");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <div className="login-page">
+      <div className="login-card">
+        <div className="brand">Tavern</div>
+        <h1>Pull up a chair</h1>
+        <p>Self-hosted writing & worldbuilding — your stories, your fire.</p>
+        <form onSubmit={submit}>
+          <label>
+            Username
+            <input value={username} onChange={(e) => setUsername(e.target.value)} autoComplete="username" required />
+          </label>
+          <label>
+            Password
+            <input
+              type="password"
+              value={password}
+              onChange={(e) => setPassword(e.target.value)}
+              autoComplete="current-password"
+              required
+            />
+          </label>
+          {error && <div className="error">{error}</div>}
+          <button className="primary" disabled={busy}>
+            {busy ? "Entering…" : "Enter"}
+          </button>
+        </form>
+      </div>
+    </div>
+  );
+}

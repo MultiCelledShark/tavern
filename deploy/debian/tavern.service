@@ -1,0 +1,20 @@
+[Unit]
+Description=Tavern writing server
+After=network.target
+
+[Service]
+Type=simple
+User=tavern
+Group=tavern
+EnvironmentFile=/etc/tavern.env
+ExecStart=/usr/local/bin/tavern
+Restart=on-failure
+RestartSec=3
+WorkingDirectory=/var/lib/tavern
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/var/lib/tavern
+
+[Install]
+WantedBy=multi-user.target

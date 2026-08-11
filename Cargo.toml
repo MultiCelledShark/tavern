@@ -1,0 +1,45 @@
+[workspace]
+resolver = "2"
+members = [
+    "crates/tavern-core",
+    "crates/tavern-db",
+    "crates/tavern-import",
+    "crates/tavern-export",
+    "crates/tavern-server",
+]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+authors = ["Tavern"]
+
+[workspace.dependencies]
+anyhow = "1"
+argon2 = "0.5"
+axum = { version = "0.8", features = ["multipart", "macros"] }
+axum-extra = { version = "0.10", features = ["cookie"] }
+cookie = "0.18"
+chrono = { version = "0.4", features = ["serde"] }
+tavern-core = { path = "crates/tavern-core" }
+tavern-db = { path = "crates/tavern-db" }
+tavern-import = { path = "crates/tavern-import" }
+tavern-export = { path = "crates/tavern-export" }
+rand = "0.8"
+rust-embed = "8"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+sha2 = "0.10"
+sqlx = { version = "0.8", features = ["runtime-tokio", "sqlite", "chrono", "uuid", "migrate"] }
+thiserror = "2"
+tokio = { version = "1", features = ["full"] }
+tower = "0.5"
+tower-http = { version = "0.6", features = ["fs", "trace", "cors"] }
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+uuid = { version = "1", features = ["v4", "serde"] }
+zip = "2"
+dotenvy = "0.15"
+tempfile = "3"
+mime_guess = "2"
+hex = "0.4"

@@ -1,0 +1,62 @@
+{
+  "title": "Sample Harbor",
+  "synopsis": "Synthetic fixture for import tests — not real story content.",
+  "elements": [
+    {
+      "module_type": "character",
+      "title": "Mira Quill",
+      "metadata": {},
+      "panels": [
+        {
+          "panel_type": "attributes",
+          "title": "Basics",
+          "content": {
+            "items": [
+              { "key": "Role", "value": "Cartographer" },
+              { "key": "Age", "value": "34" }
+            ]
+          }
+        },
+        {
+          "panel_type": "text",
+          "title": "Backstory",
+          "content": { "markdown": "Mira maps coastlines nobody else believes exist." }
+        }
+      ]
+    },
+    {
+      "module_type": "location",
+      "title": "Saltglass Pier",
+      "metadata": {},
+      "body_markdown": "A crooked pier of green glass stakes.",
+      "panels": []
+    },
+    {
+      "module_type": "manuscript",
+      "title": "Chapter 1",
+      "metadata": {},
+      "body_markdown": "The tide pulled black against the pier.\n\n[[Character:Mira Quill]] checked her charts twice.",
+      "panels": []
+    },
+    {
+      "module_type": "systems",
+      "title": "Tideworking",
+      "metadata": { "kind": "magic" },
+      "panels": [
+        {
+          "panel_type": "text",
+          "title": "Rules",
+          "content": { "markdown": "Magic drawn from lunar tide differentials." }
+        }
+      ]
+    }
+  ],
+  "links": [
+    {
+      "from_title": "Mira Quill",
+      "to_title": "Saltglass Pier",
+      "label": "lives near",
+      "link_type": "location"
+    }
+  ]
+}

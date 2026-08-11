@@ -1,0 +1,28 @@
+# Build
+/target/
+**/target/
+web/node_modules/
+# web/dist is committed so rust-embed builds without a prior npm step
+
+# Local data & secrets
+/data/
+.env
+*.db
+*.db-journal
+*.db-wal
+*.db-shm
+
+# Backups & imports (never push story content)
+*.tavern
+*.camp
+samples/private/
+docs/homelab.md
+import-samples/
+
+# OS / editor
+.DS_Store
+*.swp
+.idea/
+.vscode/
+*.log
+web/tsconfig.tsbuildinfo
