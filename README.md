@@ -40,7 +40,7 @@ cd web && npm run dev
 | Remote | URL | Notes |
 |--------|-----|-------|
 | `origin` | `git@github.com:MultiCelledShark/tavern.git` | Public — sanitize before push |
-| `forgejo` | `ssh://git@forgejo.local/key/tavern.git` | Homelab — set the real host in your local git remote |
+| `forgejo` | `forgejo:key/tavern.git` (SSH Host alias) | Homelab — set the real host in your local git remote |
 
 See [docs/REMOTES.md](docs/REMOTES.md) for push workflow.
 

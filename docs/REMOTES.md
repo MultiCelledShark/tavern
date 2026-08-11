@@ -4,8 +4,8 @@
 
 ```bash
 git remote add origin git@github.com:MultiCelledShark/tavern.git
-# Homelab (replace host with your Forgejo LAN/DNS name):
-git remote add forgejo ssh://git@forgejo.local/key/tavern.git
+# Homelab via SSH Host alias (see your ~/.ssh/config), e.g.:
+git remote add forgejo forgejo:key/tavern.git
 ```
 
 ## Push order
