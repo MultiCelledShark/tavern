@@ -11,7 +11,7 @@
           "panel_type": "text",
           "title": "How to tour",
           "content": {
-            "markdown": "Welcome to Tavern.\n\n1. Use **Modules / Items / Inspector / Tools** in the top bar to show or hide each menu (layout is remembered).\n2. On phones and tablets, those menus open as drawers over the canvas.\n3. Pick an item, then try **Focus** to clear the side menus while writing.\n4. On Characters / Locations / Systems, drag panels on the canvas.\n5. Open **Relationships** to connect characters on the graph.\n6. **Maps** and **Timeline** show places and chronology.\n\nWhen you are done exploring, create your own project from the home page — this tour is safe to delete."
+            "markdown": "Welcome to Tavern.\n\n1. Use **Modules / Items / Inspector / Tools** in the top bar to show or hide each menu (layout is remembered).\n2. On phones and tablets, those menus open as drawers over the canvas.\n3. Pick an item, then try **Focus** to clear the side menus while writing.\n4. Characters, Locations, Systems, Species, Cultures, Items, Arcs, Languages, and Religions use the panel canvas.\n5. Open **Relationships** to connect characters on the graph.\n6. **Maps** and **Timeline** show places and chronology.\n\nWhen you are done exploring, create your own project from the home page — this tour is safe to delete."
           }
         },
         {
@@ -256,6 +256,198 @@
           "content": {
             "markdown": "Mira Quill rented a loft above the pier charts. Add more events with **+** in the element list."
           }
+        }
+      ]
+    },
+    {
+      "module_type": "species",
+      "title": "Harborfolk",
+      "metadata": {},
+      "panels": [
+        {
+          "panel_type": "attributes",
+          "title": "Basics",
+          "content": {
+            "items": [
+              { "key": "Type", "value": "Human ethnicity" },
+              { "key": "Lifespan", "value": "Typical human" },
+              { "key": "Home range", "value": "Harbor Reach" }
+            ]
+          }
+        },
+        {
+          "panel_type": "text",
+          "title": "Description",
+          "content": {
+            "markdown": "Salt-stained cartographers and dock workers. Species entries use the same panel canvas as Characters."
+          }
+        },
+        {
+          "panel_type": "list",
+          "title": "Traits",
+          "content": { "items": ["Tide-sense", "Green-lantern superstitions"] }
+        }
+      ]
+    },
+    {
+      "module_type": "cultures",
+      "title": "Pier Guilds",
+      "metadata": {},
+      "panels": [
+        {
+          "panel_type": "attributes",
+          "title": "Basics",
+          "content": {
+            "items": [
+              { "key": "Region", "value": "Saltglass Pier" },
+              { "key": "Language", "value": "Reach Cant" },
+              { "key": "Era", "value": "Harbor founding" }
+            ]
+          }
+        },
+        {
+          "panel_type": "text",
+          "title": "Customs",
+          "content": {
+            "markdown": "Guilds share charts and green oil. Link cultures to languages and locations from the Related panel."
+          }
+        },
+        {
+          "panel_type": "list",
+          "title": "Values",
+          "content": { "items": ["Shared charts", "Honest fog signals"] }
+        }
+      ]
+    },
+    {
+      "module_type": "items",
+      "title": "Tideglass compass",
+      "metadata": {},
+      "panels": [
+        {
+          "panel_type": "attributes",
+          "title": "Details",
+          "content": {
+            "items": [
+              { "key": "Kind", "value": "Instrument" },
+              { "key": "Rarity", "value": "Uncommon" },
+              { "key": "Owner", "value": "Mira Quill" }
+            ]
+          }
+        },
+        {
+          "panel_type": "text",
+          "title": "Description",
+          "content": {
+            "markdown": "Needle drifts toward unexpected tides. Items support reference images in the Appearance panel."
+          }
+        },
+        {
+          "panel_type": "list",
+          "title": "Properties",
+          "content": { "items": ["Saltproof housing", "Needs green oil weekly"] }
+        }
+      ]
+    },
+    {
+      "module_type": "arcs",
+      "title": "The vanishing shoals",
+      "metadata": {},
+      "panels": [
+        {
+          "panel_type": "attributes",
+          "title": "Basics",
+          "content": {
+            "items": [
+              { "key": "Type", "value": "plot" },
+              { "key": "Status", "value": "draft" },
+              { "key": "Stakes", "value": "Harbor charts go blank" }
+            ]
+          }
+        },
+        {
+          "panel_type": "text",
+          "title": "Summary",
+          "content": {
+            "markdown": "Mira must map a coast that refuses to stay put. Use **Beats** as a checklist of scenes."
+          }
+        },
+        {
+          "panel_type": "list",
+          "title": "Beats",
+          "content": {
+            "items": [
+              "Lanterns first lit",
+              "Compass refuses north",
+              "Chart echo of a future dock"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "module_type": "languages",
+      "title": "Reach Cant",
+      "metadata": {},
+      "panels": [
+        {
+          "panel_type": "attributes",
+          "title": "Basics",
+          "content": {
+            "items": [
+              { "key": "Family", "value": "Harbor trade tongues" },
+              { "key": "Script", "value": "Green tally marks" },
+              { "key": "Speakers", "value": "Pier Guilds" }
+            ]
+          }
+        },
+        {
+          "panel_type": "text",
+          "title": "Notes",
+          "content": {
+            "markdown": "Short calls for fog and tide. Lexicon rows belong in the table panel."
+          }
+        },
+        {
+          "panel_type": "table",
+          "title": "Lexicon",
+          "content": {
+            "headers": ["Word", "Meaning"],
+            "rows": [
+              ["vire", "unexpected tide"],
+              ["glas", "green lantern light"]
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "module_type": "religions",
+      "title": "The Green Watch",
+      "metadata": {},
+      "panels": [
+        {
+          "panel_type": "attributes",
+          "title": "Basics",
+          "content": {
+            "items": [
+              { "key": "Domain", "value": "Safe harbor" },
+              { "key": "Symbol", "value": "Glass lantern" },
+              { "key": "Center", "value": "Saltglass Pier" }
+            ]
+          }
+        },
+        {
+          "panel_type": "text",
+          "title": "Beliefs",
+          "content": {
+            "markdown": "Keep a green light burning so the tide remembers the shore."
+          }
+        },
+        {
+          "panel_type": "list",
+          "title": "Rites",
+          "content": { "items": ["Dusk lighting", "Oil blessing before surveys"] }
         }
       ]
     }

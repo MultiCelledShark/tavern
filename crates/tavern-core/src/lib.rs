@@ -83,6 +83,12 @@ pub enum ModuleType {
     Systems,
     Maps,
     Timeline,
+    Species,
+    Cultures,
+    Items,
+    Arcs,
+    Languages,
+    Religions,
 }
 
 impl ModuleType {
@@ -96,6 +102,12 @@ impl ModuleType {
             Self::Systems => "systems",
             Self::Maps => "maps",
             Self::Timeline => "timeline",
+            Self::Species => "species",
+            Self::Cultures => "cultures",
+            Self::Items => "items",
+            Self::Arcs => "arcs",
+            Self::Languages => "languages",
+            Self::Religions => "religions",
         }
     }
 
@@ -109,6 +121,12 @@ impl ModuleType {
             "systems" => Some(Self::Systems),
             "maps" | "map" => Some(Self::Maps),
             "timeline" | "timelines" => Some(Self::Timeline),
+            "species" | "races" => Some(Self::Species),
+            "cultures" | "culture" => Some(Self::Cultures),
+            "items" | "item" | "objects" => Some(Self::Items),
+            "arcs" | "arc" | "plots" | "plot" => Some(Self::Arcs),
+            "languages" | "language" => Some(Self::Languages),
+            "religions" | "religion" | "beliefs" => Some(Self::Religions),
             _ => None,
         }
     }
@@ -123,6 +141,12 @@ impl ModuleType {
             Self::Systems,
             Self::Maps,
             Self::Timeline,
+            Self::Species,
+            Self::Cultures,
+            Self::Items,
+            Self::Arcs,
+            Self::Languages,
+            Self::Religions,
         ]
     }
 }
@@ -432,6 +456,84 @@ pub fn default_template_pages(module: ModuleType) -> serde_json::Value {
                     {"key": "Era", "value": ""}
                 ]}},
                 {"panel_type": "text", "title": "What happened", "content": {"markdown": ""}}
+            ]
+        }]),
+        ModuleType::Species => serde_json::json!([{
+            "title": "Overview",
+            "panels": [
+                {"panel_type": "attributes", "title": "Basics", "content": {"items": [
+                    {"key": "Type", "value": ""},
+                    {"key": "Lifespan", "value": ""},
+                    {"key": "Home range", "value": ""}
+                ]}},
+                {"panel_type": "text", "title": "Description", "content": {"markdown": ""}},
+                {"panel_type": "list", "title": "Traits", "content": {"items": []}},
+                {"panel_type": "image", "title": "References", "content": {"images": []}}
+            ]
+        }]),
+        ModuleType::Cultures => serde_json::json!([{
+            "title": "Overview",
+            "panels": [
+                {"panel_type": "attributes", "title": "Basics", "content": {"items": [
+                    {"key": "Region", "value": ""},
+                    {"key": "Language", "value": ""},
+                    {"key": "Era", "value": ""}
+                ]}},
+                {"panel_type": "text", "title": "Customs", "content": {"markdown": ""}},
+                {"panel_type": "list", "title": "Values", "content": {"items": []}},
+                {"panel_type": "links", "title": "Related", "content": {"element_ids": []}}
+            ]
+        }]),
+        ModuleType::Items => serde_json::json!([{
+            "title": "Object",
+            "panels": [
+                {"panel_type": "attributes", "title": "Details", "content": {"items": [
+                    {"key": "Kind", "value": ""},
+                    {"key": "Rarity", "value": ""},
+                    {"key": "Owner", "value": ""}
+                ]}},
+                {"panel_type": "text", "title": "Description", "content": {"markdown": ""}},
+                {"panel_type": "image", "title": "Appearance", "content": {"images": []}},
+                {"panel_type": "list", "title": "Properties", "content": {"items": []}}
+            ]
+        }]),
+        ModuleType::Arcs => serde_json::json!([{
+            "title": "Arc",
+            "panels": [
+                {"panel_type": "attributes", "title": "Basics", "content": {"items": [
+                    {"key": "Type", "value": "plot"},
+                    {"key": "Status", "value": "draft"},
+                    {"key": "Stakes", "value": ""}
+                ]}},
+                {"panel_type": "text", "title": "Summary", "content": {"markdown": ""}},
+                {"panel_type": "list", "title": "Beats", "content": {"items": []}},
+                {"panel_type": "links", "title": "Cast & places", "content": {"element_ids": []}}
+            ]
+        }]),
+        ModuleType::Languages => serde_json::json!([{
+            "title": "Language",
+            "panels": [
+                {"panel_type": "attributes", "title": "Basics", "content": {"items": [
+                    {"key": "Family", "value": ""},
+                    {"key": "Script", "value": ""},
+                    {"key": "Speakers", "value": ""}
+                ]}},
+                {"panel_type": "text", "title": "Notes", "content": {"markdown": ""}},
+                {"panel_type": "table", "title": "Lexicon", "content": {"headers": ["Word", "Meaning"], "rows": []}},
+                {"panel_type": "list", "title": "Phonology notes", "content": {"items": []}}
+            ]
+        }]),
+        ModuleType::Religions => serde_json::json!([{
+            "title": "Faith",
+            "panels": [
+                {"panel_type": "attributes", "title": "Basics", "content": {"items": [
+                    {"key": "Domain", "value": ""},
+                    {"key": "Symbol", "value": ""},
+                    {"key": "Center", "value": ""}
+                ]}},
+                {"panel_type": "text", "title": "Beliefs", "content": {"markdown": ""}},
+                {"panel_type": "list", "title": "Rites", "content": {"items": []}},
+                {"panel_type": "links", "title": "Related", "content": {"element_ids": []}}
             ]
         }]),
     }

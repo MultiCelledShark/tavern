@@ -35,6 +35,12 @@ const MODULE_TIPS: Record<ModuleType, string> = {
   systems: TIPS.moduleSystems,
   maps: TIPS.moduleMaps,
   timeline: TIPS.moduleTimeline,
+  species: TIPS.moduleSpecies,
+  cultures: TIPS.moduleCultures,
+  items: TIPS.moduleItems,
+  arcs: TIPS.moduleArcs,
+  languages: TIPS.moduleLanguages,
+  religions: TIPS.moduleReligions,
 };
 
 const COMPACT_MQ = "(max-width: 1100px)";

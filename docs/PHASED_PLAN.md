@@ -25,4 +25,5 @@
 - [x] Guided tutorial project (`POST /api/projects/tutorial`) + hover tips on shell controls
 - [x] Collapsible workspace chrome + mobile/tablet drawer layout
 - [x] Corkboard drag layout, inline rename, undo/redo/reset
+- [x] Next module batch: Species, Cultures, Items, Arcs, Languages, Religions
 - [ ] **Albion / Debian nginx cutover** — planned in [DEBIAN_CUTOVER.md](DEBIAN_CUTOVER.md); not executed yet. Keep the watch list there updated when deploy surface changes. Private host details → gitignored `docs/homelab.md` (see `homelab.md.example`).

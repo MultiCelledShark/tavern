@@ -346,8 +346,14 @@ fn map_module_name(name: &str) -> Option<&'static str> {
         "systems" | "magic" | "tech" | "technology" => Some("systems"),
         "maps" | "map" => Some("maps"),
         "timeline" | "timelines" | "events" => Some("timeline"),
-        "calendar" | "languages" | "arcs" | "research" | "species"
-        | "cultures" | "religions" | "philosophies" | "items" => None,
+        "species" | "races" => Some("species"),
+        "cultures" | "culture" => Some("cultures"),
+        "items" | "item" | "objects" => Some("items"),
+        "arcs" | "arc" | "plots" | "plot" => Some("arcs"),
+        "languages" | "language" => Some("languages"),
+        "religions" | "religion" | "beliefs" => Some("religions"),
+        // Still folded into encyclopedia until dedicated UIs exist
+        "calendar" | "research" | "philosophies" => None,
         _ => None,
     }
 }

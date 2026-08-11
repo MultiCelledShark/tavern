@@ -22,7 +22,13 @@ export type ModuleType =
   | "location"
   | "systems"
   | "maps"
-  | "timeline";
+  | "timeline"
+  | "species"
+  | "cultures"
+  | "items"
+  | "arcs"
+  | "languages"
+  | "religions";
 
 export type Element = {
   id: string;
@@ -250,4 +256,10 @@ export const MODULES: { id: ModuleType; label: string }[] = [
   { id: "systems", label: "Systems" },
   { id: "maps", label: "Maps" },
   { id: "timeline", label: "Timeline" },
+  { id: "species", label: "Species" },
+  { id: "cultures", label: "Cultures" },
+  { id: "items", label: "Items" },
+  { id: "arcs", label: "Arcs" },
+  { id: "languages", label: "Languages" },
+  { id: "religions", label: "Religions" },
 ];
