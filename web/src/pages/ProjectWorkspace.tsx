@@ -41,6 +41,9 @@ const MODULE_TIPS: Record<ModuleType, string> = {
   arcs: TIPS.moduleArcs,
   languages: TIPS.moduleLanguages,
   religions: TIPS.moduleReligions,
+  research: TIPS.moduleResearch,
+  philosophies: TIPS.modulePhilosophies,
+  calendar: TIPS.moduleCalendar,
 };
 
 const COMPACT_MQ = "(max-width: 1100px)";

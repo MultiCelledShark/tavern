@@ -352,8 +352,9 @@ fn map_module_name(name: &str) -> Option<&'static str> {
         "arcs" | "arc" | "plots" | "plot" => Some("arcs"),
         "languages" | "language" => Some("languages"),
         "religions" | "religion" | "beliefs" => Some("religions"),
-        // Still folded into encyclopedia until dedicated UIs exist
-        "calendar" | "research" | "philosophies" => None,
+        "research" | "notes" => Some("research"),
+        "philosophies" | "philosophy" => Some("philosophies"),
+        "calendar" | "calendars" => Some("calendar"),
         _ => None,
     }
 }

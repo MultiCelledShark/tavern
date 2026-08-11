@@ -239,7 +239,7 @@ fn classify_item(chunk: &str, title: &str) -> (String, Option<String>) {
     let unsup = if looks_like_timeline(title, chunk) {
         Some("timeline".into())
     } else if chunk.to_ascii_lowercase().contains("research") {
-        Some("research".into())
+        return ("research".into(), None);
     } else {
         Some("unclassified".into())
     };

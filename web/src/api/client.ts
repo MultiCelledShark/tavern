@@ -28,7 +28,10 @@ export type ModuleType =
   | "items"
   | "arcs"
   | "languages"
-  | "religions";
+  | "religions"
+  | "research"
+  | "philosophies"
+  | "calendar";
 
 export type Element = {
   id: string;
@@ -262,4 +265,7 @@ export const MODULES: { id: ModuleType; label: string }[] = [
   { id: "arcs", label: "Arcs" },
   { id: "languages", label: "Languages" },
   { id: "religions", label: "Religions" },
+  { id: "research", label: "Research" },
+  { id: "philosophies", label: "Philosophies" },
+  { id: "calendar", label: "Calendar" },
 ];

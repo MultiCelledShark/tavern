@@ -6,7 +6,7 @@ Inspired by Campfire’s layout concepts; original code and UI. Not affiliated w
 
 ## Features (v1)
 
-- **Modules:** Manuscript, Characters, Encyclopedia, Relationships, Locations, Systems (Magic/Tech), Maps, Timeline, Species, Cultures, Items, Arcs, Languages, Religions
+- **Modules:** Manuscript, Characters, Encyclopedia, Relationships, Locations, Systems (Magic/Tech), Maps, Timeline, Species, Cultures, Items, Arcs, Languages, Religions, Research, Philosophies, Calendar
 - **Panel engine:** attributes, text, list, stats, image, table, links — drag/resize canvas
 - **Manuscript:** TipTap editor, source mode, corkboard, word goals, wiki-link helpers
 - **Relationships:** React Flow graph backed by element links

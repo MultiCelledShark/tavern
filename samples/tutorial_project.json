@@ -11,7 +11,7 @@
           "panel_type": "text",
           "title": "How to tour",
           "content": {
-            "markdown": "Welcome to Tavern.\n\n1. Use **Modules / Items / Inspector / Tools** in the top bar to show or hide each menu (layout is remembered).\n2. On phones and tablets, those menus open as drawers over the canvas.\n3. Pick an item, then try **Focus** to clear the side menus while writing.\n4. Characters, Locations, Systems, Species, Cultures, Items, Arcs, Languages, and Religions use the panel canvas.\n5. Open **Relationships** to connect characters on the graph.\n6. **Maps** and **Timeline** show places and chronology.\n\nWhen you are done exploring, create your own project from the home page — this tour is safe to delete."
+            "markdown": "Welcome to Tavern.\n\n1. Use **Modules / Items / Inspector / Tools** in the top bar to show or hide each menu (layout is remembered).\n2. On phones and tablets, those menus open as drawers over the canvas.\n3. Pick an item, then try **Focus** to clear the side menus while writing.\n4. Most lore modules (Characters through Calendar) use the panel canvas.\n5. Open **Relationships** to connect characters on the graph.\n6. **Maps** and **Timeline** show places and chronology.\n\nWhen you are done exploring, create your own project from the home page — this tour is safe to delete."
           }
         },
         {
@@ -448,6 +448,112 @@
           "panel_type": "list",
           "title": "Rites",
           "content": { "items": ["Dusk lighting", "Oil blessing before surveys"] }
+        }
+      ]
+    },
+    {
+      "module_type": "research",
+      "title": "Green oil composition",
+      "metadata": {},
+      "panels": [
+        {
+          "panel_type": "attributes",
+          "title": "Source",
+          "content": {
+            "items": [
+              { "key": "Topic", "value": "Lantern fuel" },
+              { "key": "Status", "value": "open" },
+              { "key": "Priority", "value": "medium" }
+            ]
+          }
+        },
+        {
+          "panel_type": "text",
+          "title": "Findings",
+          "content": {
+            "markdown": "Kelp distillate glows only when cooled by fog. Research notes are for open questions that are not yet encyclopedia-ready."
+          }
+        },
+        {
+          "panel_type": "list",
+          "title": "Questions",
+          "content": { "items": ["Does moonlight change the burn rate?", "Can oil be stored inland?"] }
+        }
+      ]
+    },
+    {
+      "module_type": "philosophies",
+      "title": "Chart-first doctrine",
+      "metadata": {},
+      "panels": [
+        {
+          "panel_type": "attributes",
+          "title": "Basics",
+          "content": {
+            "items": [
+              { "key": "School", "value": "Survey pragmatism" },
+              { "key": "Era", "value": "Harbor founding" },
+              { "key": "Influence", "value": "Pier Guilds" }
+            ]
+          }
+        },
+        {
+          "panel_type": "text",
+          "title": "Tenets",
+          "content": {
+            "markdown": "A coast that cannot be drawn cannot be trusted. Philosophies sit beside Religions when belief is secular."
+          }
+        },
+        {
+          "panel_type": "list",
+          "title": "Thinkers",
+          "content": { "items": ["Old Quill", "Harbor survey board"] }
+        }
+      ]
+    },
+    {
+      "module_type": "calendar",
+      "title": "Harbor Reckoning",
+      "metadata": {},
+      "panels": [
+        {
+          "panel_type": "attributes",
+          "title": "Basics",
+          "content": {
+            "items": [
+              { "key": "Epoch", "value": "First green lantern" },
+              { "key": "Year length", "value": "12 tidespans" },
+              { "key": "Used by", "value": "Pier Guilds" }
+            ]
+          }
+        },
+        {
+          "panel_type": "table",
+          "title": "Months",
+          "content": {
+            "headers": ["Name", "Days", "Notes"],
+            "rows": [
+              ["Greenglaze", "30", "Lantern festivals"],
+              ["Saltfog", "28", "Survey season opens"]
+            ]
+          }
+        },
+        {
+          "panel_type": "list",
+          "title": "Eras",
+          "content": { "items": ["Pre-lantern", "Harbor founding", "Survey season"] }
+        },
+        {
+          "panel_type": "list",
+          "title": "Holidays",
+          "content": { "items": ["Dusk of First Light", "Chart Day"] }
+        },
+        {
+          "panel_type": "text",
+          "title": "Notes",
+          "content": {
+            "markdown": "Timeline events can use Harbor Reckoning dates. Edit the Months table to match your world."
+          }
         }
       ]
     }

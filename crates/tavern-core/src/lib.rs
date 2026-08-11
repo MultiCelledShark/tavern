@@ -89,6 +89,9 @@ pub enum ModuleType {
     Arcs,
     Languages,
     Religions,
+    Research,
+    Philosophies,
+    Calendar,
 }
 
 impl ModuleType {
@@ -108,6 +111,9 @@ impl ModuleType {
             Self::Arcs => "arcs",
             Self::Languages => "languages",
             Self::Religions => "religions",
+            Self::Research => "research",
+            Self::Philosophies => "philosophies",
+            Self::Calendar => "calendar",
         }
     }
 
@@ -127,6 +133,9 @@ impl ModuleType {
             "arcs" | "arc" | "plots" | "plot" => Some(Self::Arcs),
             "languages" | "language" => Some(Self::Languages),
             "religions" | "religion" | "beliefs" => Some(Self::Religions),
+            "research" | "notes" => Some(Self::Research),
+            "philosophies" | "philosophy" => Some(Self::Philosophies),
+            "calendar" | "calendars" => Some(Self::Calendar),
             _ => None,
         }
     }
@@ -147,6 +156,9 @@ impl ModuleType {
             Self::Arcs,
             Self::Languages,
             Self::Religions,
+            Self::Research,
+            Self::Philosophies,
+            Self::Calendar,
         ]
     }
 }
@@ -534,6 +546,46 @@ pub fn default_template_pages(module: ModuleType) -> serde_json::Value {
                 {"panel_type": "text", "title": "Beliefs", "content": {"markdown": ""}},
                 {"panel_type": "list", "title": "Rites", "content": {"items": []}},
                 {"panel_type": "links", "title": "Related", "content": {"element_ids": []}}
+            ]
+        }]),
+        ModuleType::Research => serde_json::json!([{
+            "title": "Notes",
+            "panels": [
+                {"panel_type": "attributes", "title": "Source", "content": {"items": [
+                    {"key": "Topic", "value": ""},
+                    {"key": "Status", "value": "open"},
+                    {"key": "Priority", "value": ""}
+                ]}},
+                {"panel_type": "text", "title": "Findings", "content": {"markdown": ""}},
+                {"panel_type": "list", "title": "Questions", "content": {"items": []}},
+                {"panel_type": "links", "title": "Related lore", "content": {"element_ids": []}}
+            ]
+        }]),
+        ModuleType::Philosophies => serde_json::json!([{
+            "title": "School",
+            "panels": [
+                {"panel_type": "attributes", "title": "Basics", "content": {"items": [
+                    {"key": "School", "value": ""},
+                    {"key": "Era", "value": ""},
+                    {"key": "Influence", "value": ""}
+                ]}},
+                {"panel_type": "text", "title": "Tenets", "content": {"markdown": ""}},
+                {"panel_type": "list", "title": "Thinkers", "content": {"items": []}},
+                {"panel_type": "links", "title": "Related", "content": {"element_ids": []}}
+            ]
+        }]),
+        ModuleType::Calendar => serde_json::json!([{
+            "title": "Calendar",
+            "panels": [
+                {"panel_type": "attributes", "title": "Basics", "content": {"items": [
+                    {"key": "Epoch", "value": ""},
+                    {"key": "Year length", "value": ""},
+                    {"key": "Used by", "value": ""}
+                ]}},
+                {"panel_type": "table", "title": "Months", "content": {"headers": ["Name", "Days", "Notes"], "rows": []}},
+                {"panel_type": "list", "title": "Eras", "content": {"items": []}},
+                {"panel_type": "list", "title": "Holidays", "content": {"items": []}},
+                {"panel_type": "text", "title": "Notes", "content": {"markdown": ""}}
             ]
         }]),
     }
