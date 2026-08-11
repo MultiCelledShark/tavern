@@ -104,6 +104,7 @@ a { color: var(--moss-dark); }
 
 .app-shell.focus-mode .main-canvas .manuscript-layout,
 .app-shell.focus-mode .main-canvas .editor-surface {
+  width: 100%;
   max-width: 48rem;
   margin-inline: auto;
 }
@@ -502,11 +503,14 @@ label.buttonish {
   border-radius: 10px;
   min-height: 60vh;
   padding: 1.25rem 1.5rem;
+  width: 100%;
+  box-sizing: border-box;
 }
 
 .ProseMirror {
   outline: none;
   min-height: 50vh;
+  width: 100%;
   font-size: 1.05rem;
   line-height: 1.7;
 }
