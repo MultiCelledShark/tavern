@@ -62,6 +62,8 @@ export default function ProjectWorkspace({
     () => typeof window !== "undefined" && window.matchMedia(COMPACT_MQ).matches
   );
   const focusSnapshot = useRef<ChromeState | null>(null);
+  const topbarRef = useRef<HTMLElement | null>(null);
+  const shellRef = useRef<HTMLDivElement | null>(null);
 
   const selected = useMemo(
     () => elements.find((e) => e.id === selectedId) || null,
@@ -87,6 +89,26 @@ export default function ProjectWorkspace({
     mq.addEventListener("change", apply);
     return () => mq.removeEventListener("change", apply);
   }, []);
+
+  useEffect(() => {
+    const topbar = topbarRef.current;
+    const shell = shellRef.current;
+    if (!topbar || !shell) return;
+
+    const syncSheetTop = () => {
+      const bottom = topbar.getBoundingClientRect().bottom;
+      shell.style.setProperty("--chrome-sheet-top", `${Math.ceil(bottom + 8)}px`);
+    };
+
+    syncSheetTop();
+    const ro = new ResizeObserver(syncSheetTop);
+    ro.observe(topbar);
+    window.addEventListener("resize", syncSheetTop);
+    return () => {
+      ro.disconnect();
+      window.removeEventListener("resize", syncSheetTop);
+    };
+  }, [compact, chrome.tools]);
 
   const setPanel = useCallback((panel: ChromePanel, open: boolean) => {
     setChrome((prev) => {
@@ -213,8 +235,8 @@ export default function ProjectWorkspace({
     .join(" ");
 
   return (
-    <div className={shellClass}>
-      <header className="topbar">
+    <div className={shellClass} ref={shellRef}>
+      <header className="topbar" ref={topbarRef}>
         <Link to="/" className="brand" style={{ textDecoration: "none" }} data-tip={TIPS.brand}>
           Tavern
         </Link>

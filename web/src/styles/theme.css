@@ -81,27 +81,27 @@ a { color: var(--moss-dark); }
   --rail-w: 220px;
   --list-w: 260px;
   --insp-w: 280px;
+  --chrome-sheet-top: 5.5rem;
   display: grid;
   grid-template-columns: var(--rail-w) var(--list-w) minmax(0, 1fr) var(--insp-w);
   grid-template-rows: auto minmax(0, 1fr);
   height: 100%;
   min-height: 100dvh;
-  transition: grid-template-columns 0.18s ease;
 }
 
 .app-shell.chrome-modules-off { --rail-w: 0px; }
 .app-shell.chrome-list-off { --list-w: 0px; }
 .app-shell.chrome-inspector-off { --insp-w: 0px; }
 
-.app-shell.chrome-modules-off .module-rail,
-.app-shell.chrome-list-off .element-list,
-.app-shell.chrome-inspector-off .inspector {
+.app-shell.is-wide.chrome-modules-off .module-rail,
+.app-shell.is-wide.chrome-list-off .element-list,
+.app-shell.is-wide.chrome-inspector-off .inspector {
+  visibility: hidden;
   overflow: hidden;
   border: none;
   padding: 0;
   min-width: 0;
   pointer-events: none;
-  opacity: 0;
 }
 
 .app-shell.chrome-tools-off .topbar-tools {
@@ -704,57 +704,50 @@ label.buttonish {
     padding: 0.85rem;
   }
 
+  /* Viewport-inset sheets — avoid off-canvas translateX, which clipped on the left */
   .app-shell.is-compact .module-rail,
   .app-shell.is-compact .element-list,
   .app-shell.is-compact .inspector {
     position: fixed;
-    top: 0;
-    bottom: 0;
     z-index: 45;
-    width: min(20rem, 88vw);
-    max-width: 100%;
+    top: var(--chrome-sheet-top, 5.5rem);
+    bottom: max(0.75rem, env(safe-area-inset-bottom, 0px));
+    left: max(0.75rem, env(safe-area-inset-left, 0px));
+    right: auto;
+    width: min(22rem, calc(100vw - 1.5rem));
+    max-width: calc(100vw - 1.5rem - env(safe-area-inset-left, 0px) - env(safe-area-inset-right, 0px));
     max-height: none;
-    opacity: 1;
-    pointer-events: auto;
+    margin: 0;
     padding: 0;
-    border: none;
-    box-shadow: 0 12px 40px rgba(28, 36, 33, 0.28);
-    transition: transform 0.2s ease;
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    box-shadow: 0 16px 40px rgba(28, 36, 33, 0.28);
     overflow: auto;
+    transform: none;
+    opacity: 1;
+    visibility: hidden;
+    pointer-events: none;
   }
 
   .app-shell.is-compact .module-rail {
-    left: 0;
-    transform: translateX(-105%);
     background: color-mix(in srgb, var(--paper) 88%, var(--moss) 12%);
   }
 
   .app-shell.is-compact .element-list {
-    left: 0;
-    transform: translateX(-105%);
     background: var(--paper);
   }
 
   .app-shell.is-compact .inspector {
-    right: 0;
     left: auto;
-    transform: translateX(105%);
+    right: max(0.75rem, env(safe-area-inset-right, 0px));
     background: var(--paper);
   }
 
   .app-shell.is-compact.chrome-modules-on .module-rail,
-  .app-shell.is-compact.chrome-list-on .element-list {
-    transform: translateX(0);
-  }
-
+  .app-shell.is-compact.chrome-list-on .element-list,
   .app-shell.is-compact.chrome-inspector-on .inspector {
-    transform: translateX(0);
-  }
-
-  .app-shell.is-compact.chrome-modules-off .module-rail,
-  .app-shell.is-compact.chrome-list-off .element-list,
-  .app-shell.is-compact.chrome-inspector-off .inspector {
-    pointer-events: none;
+    visibility: visible;
+    pointer-events: auto;
   }
 
   .app-shell.is-compact .chrome-backdrop {
@@ -783,7 +776,11 @@ label.buttonish {
   }
 
   .app-shell.is-compact .panel-chrome-head {
-    padding-top: calc(0.55rem + env(safe-area-inset-top, 0px));
+    position: sticky;
+    top: 0;
+    z-index: 1;
+    background: inherit;
+    padding-top: 0.55rem;
   }
 
   .relationship-canvas {
