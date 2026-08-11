@@ -1,9 +1,10 @@
 //! Campfire / intermediate project import.
 //!
-//! Until a real Campfire backup sample is available, the primary path is our
-//! owned intermediate JSON (`IntermediateProject`). Proprietary `.camp` / zip
-//! backups are fingerprinted and best-effort mapped; unknown modules become
-//! encyclopedia stubs so nothing is silently dropped.
+//! Supported Campfire ingress is **HTML Export Server** dumps (`campfire_html`).
+//! Proprietary desktop-only project backups are not targeted (web/Android users
+//! cannot produce them). Owned intermediate JSON remains the primary portable
+//! format; unknown ZIP/binary blobs are best-effort mapped or stubbed so
+//! nothing is silently dropped.
 
 use anyhow::{anyhow, Context, Result};
 use serde_json::Value;

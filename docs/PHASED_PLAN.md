@@ -9,11 +9,15 @@
 - [x] v1 modules
 - [x] Export + `.tavern` backup
 - [x] Import scaffold (intermediate JSON / zip / opaque stubs)
+- [x] Campfire **HTML Export Server** importer (`campfire_html`)
 - [x] systemd unit + public deploy notes
+
+## Deferred / won’t do
+
+- [ ] ~~Real Campfire proprietary backup reverse-engineering (`.camp` / opaque desktop backups)~~ — **dropped**. Campfire only documents local project backup on the **desktop app** (`File → Download Project Backup`). Web/Android users don’t get that file; supported Campfire ingress is the HTML export path already implemented.
 
 ## Next
 
-- [ ] Real Campfire backup reverse-engineering (needs user sample)
 - [ ] Interactive maps / timeline modules
 - [ ] Asset upload UI for image panels
 - [ ] Albion nginx cutover
