@@ -1069,10 +1069,17 @@ async fn index() -> Response {
 }
 
 async fn static_asset(Path(path): Path<String>) -> Response {
+    // Route is `/assets/{*path}`, but rust-embed keys are relative to `web/dist/`
+    // (e.g. `assets/index-….js`), so re-prefix the folder segment.
     let path = path.trim_start_matches('/');
-    match Assets::get(path) {
+    let key = if path.starts_with("assets/") {
+        path.to_string()
+    } else {
+        format!("assets/{path}")
+    };
+    match Assets::get(&key) {
         Some(f) => {
-            let mime = mime_guess::from_path(path)
+            let mime = mime_guess::from_path(&key)
                 .first_or_octet_stream()
                 .to_string();
             ([(header::CONTENT_TYPE, mime)], f.data.to_vec()).into_response()
