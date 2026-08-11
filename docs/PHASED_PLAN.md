@@ -22,4 +22,5 @@
 - [x] Asset upload UI for image panels (+ map backgrounds)
 - [x] Interactive maps module (image + pins linked to locations)
 - [x] Timeline module (dated events + detail panels)
+- [x] Guided tutorial project (`POST /api/projects/tutorial`) + hover tips on shell controls
 - [ ] **Albion / Debian nginx cutover** — planned in [DEBIAN_CUTOVER.md](DEBIAN_CUTOVER.md); not executed yet. Keep the watch list there updated when deploy surface changes. Private host details → gitignored `docs/homelab.md` (see `homelab.md.example`).
