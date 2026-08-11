@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Link, useParams } from "react-router-dom";
 import {
   api,
@@ -15,6 +15,14 @@ import ManuscriptEditor from "../components/ManuscriptEditor";
 import RelationshipGraph from "../components/RelationshipGraph";
 import MapCanvas from "../components/MapCanvas";
 import TimelineView from "../components/TimelineView";
+import {
+  ChromePanel,
+  ChromeState,
+  anyDrawerOpen,
+  chromeClassNames,
+  loadChrome,
+  saveChrome,
+} from "../lib/chrome";
 import { TIPS } from "../tips";
 
 const MODULE_TIPS: Record<ModuleType, string> = {
@@ -27,6 +35,8 @@ const MODULE_TIPS: Record<ModuleType, string> = {
   maps: TIPS.moduleMaps,
   timeline: TIPS.moduleTimeline,
 };
+
+const COMPACT_MQ = "(max-width: 1100px)";
 
 export default function ProjectWorkspace({
   user,
@@ -43,11 +53,15 @@ export default function ProjectWorkspace({
   const [links, setLinks] = useState<ElementLink[]>([]);
   const [allElements, setAllElements] = useState<Element[]>([]);
   const [grants, setGrants] = useState<ProjectGrant[]>([]);
-  const [focus, setFocus] = useState(false);
   const [corkboard, setCorkboard] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [grantUser, setGrantUser] = useState("");
   const [newTitle, setNewTitle] = useState("");
+  const [chrome, setChrome] = useState<ChromeState>(() => loadChrome());
+  const [compact, setCompact] = useState(
+    () => typeof window !== "undefined" && window.matchMedia(COMPACT_MQ).matches
+  );
+  const focusSnapshot = useRef<ChromeState | null>(null);
 
   const selected = useMemo(
     () => elements.find((e) => e.id === selectedId) || null,
@@ -58,6 +72,74 @@ export default function ProjectWorkspace({
     () => allElements.filter((e) => e.module_type === "location"),
     [allElements]
   );
+
+  const focused =
+    !chrome.modules && !chrome.list && !chrome.inspector;
+
+  useEffect(() => {
+    saveChrome(chrome);
+  }, [chrome]);
+
+  useEffect(() => {
+    const mq = window.matchMedia(COMPACT_MQ);
+    const apply = () => setCompact(mq.matches);
+    apply();
+    mq.addEventListener("change", apply);
+    return () => mq.removeEventListener("change", apply);
+  }, []);
+
+  const setPanel = useCallback((panel: ChromePanel, open: boolean) => {
+    setChrome((prev) => {
+      // On compact layouts, keep drawers mutually exclusive for room to work.
+      if (open && (panel === "modules" || panel === "list" || panel === "inspector")) {
+        const next = { ...prev, modules: false, list: false, inspector: false, [panel]: true };
+        if (!window.matchMedia(COMPACT_MQ).matches) {
+          return { ...prev, [panel]: true };
+        }
+        return next;
+      }
+      return { ...prev, [panel]: open };
+    });
+    if (open) focusSnapshot.current = null;
+  }, []);
+
+  const togglePanel = useCallback(
+    (panel: ChromePanel) => {
+      setChrome((prev) => {
+        const open = !prev[panel];
+        if (open && (panel === "modules" || panel === "list" || panel === "inspector")) {
+          if (window.matchMedia(COMPACT_MQ).matches) {
+            return { ...prev, modules: false, list: false, inspector: false, [panel]: true };
+          }
+        }
+        return { ...prev, [panel]: open };
+      });
+      focusSnapshot.current = null;
+    },
+    []
+  );
+
+  const closeDrawers = useCallback(() => {
+    setChrome((prev) => ({ ...prev, modules: false, list: false, inspector: false }));
+  }, []);
+
+  const toggleFocus = useCallback(() => {
+    setChrome((prev) => {
+      const allClosed = !prev.modules && !prev.list && !prev.inspector;
+      if (allClosed) {
+        const restore = focusSnapshot.current || {
+          ...prev,
+          modules: true,
+          list: true,
+          inspector: !window.matchMedia(COMPACT_MQ).matches,
+        };
+        focusSnapshot.current = null;
+        return { ...restore, tools: prev.tools };
+      }
+      focusSnapshot.current = prev;
+      return { ...prev, modules: false, list: false, inspector: false };
+    });
+  }, []);
 
   const refreshElements = useCallback(async () => {
     const list = await api.elements(projectId, module);
@@ -106,6 +188,7 @@ export default function ProjectWorkspace({
     await refreshElements();
     setSelectedId(el.id);
     setAllElements(await api.elements(projectId));
+    if (compact) setPanel("list", false);
   }
 
   async function download(blob: Blob, name: string) {
@@ -120,60 +203,131 @@ export default function ProjectWorkspace({
   const createLabel =
     module === "timeline" ? "Event" : module === "maps" ? "Map" : "Title";
 
+  const shellClass = [
+    "app-shell",
+    chromeClassNames(chrome),
+    compact ? "is-compact" : "is-wide",
+    focused ? "focus-mode" : "",
+  ]
+    .filter(Boolean)
+    .join(" ");
+
   return (
-    <div className={`app-shell${focus ? " focus-mode" : ""}`}>
+    <div className={shellClass}>
       <header className="topbar">
         <Link to="/" className="brand" style={{ textDecoration: "none" }} data-tip={TIPS.brand}>
           Tavern
         </Link>
-        <span>{project?.title || "…"}</span>
+        <span className="topbar-title">{project?.title || "…"}</span>
         <div className="spacer" />
-        <button type="button" data-tip={TIPS.focus} onClick={() => setFocus((f) => !f)}>
-          {focus ? "Exit focus" : "Focus"}
-        </button>
-        <button
-          type="button"
-          data-tip={TIPS.exportMd}
-          onClick={async () => {
-            const blob = await api.exportProject(projectId, "markdown", "manuscript");
-            await download(blob, `${project?.title || "project"}-manuscript.md`);
-          }}
-        >
-          Export MD
-        </button>
-        <button
-          type="button"
-          data-tip={TIPS.exportDocx}
-          onClick={async () => {
-            try {
-              const blob = await api.exportProject(projectId, "docx", "manuscript");
-              await download(blob, `${project?.title || "project"}.docx`);
-            } catch {
-              setError("DOCX export needs pandoc on the server");
-            }
-          }}
-        >
-          Export DOCX
-        </button>
-        <button
-          type="button"
-          data-tip={TIPS.backup}
-          onClick={async () => {
-            const blob = await api.backupProject(projectId);
-            await download(blob, `${project?.title || "project"}.tavern`);
-          }}
-        >
-          Backup
-        </button>
-        <span className="muted" style={{ color: "#c5cec8" }}>
-          {user.username}
-        </span>
-        <button type="button" data-tip={TIPS.logout} onClick={() => onLogout()}>
-          Log out
-        </button>
+
+        <div className="chrome-toggles" role="toolbar" aria-label="Layout panels">
+          <button
+            type="button"
+            className={chrome.modules ? "primary" : ""}
+            aria-pressed={chrome.modules}
+            data-tip={TIPS.chromeModules}
+            onClick={() => togglePanel("modules")}
+          >
+            Modules
+          </button>
+          <button
+            type="button"
+            className={chrome.list ? "primary" : ""}
+            aria-pressed={chrome.list}
+            data-tip={TIPS.chromeList}
+            onClick={() => togglePanel("list")}
+          >
+            Items
+          </button>
+          <button
+            type="button"
+            className={chrome.inspector ? "primary" : ""}
+            aria-pressed={chrome.inspector}
+            data-tip={TIPS.chromeInspector}
+            onClick={() => togglePanel("inspector")}
+          >
+            Inspector
+          </button>
+          <button
+            type="button"
+            className={chrome.tools ? "primary" : ""}
+            aria-pressed={chrome.tools}
+            data-tip={TIPS.chromeTools}
+            onClick={() => togglePanel("tools")}
+          >
+            Tools
+          </button>
+          <button type="button" data-tip={TIPS.focus} onClick={toggleFocus}>
+            {focused ? "Exit focus" : "Focus"}
+          </button>
+        </div>
+
+        <div className="topbar-tools">
+          <button
+            type="button"
+            data-tip={TIPS.exportMd}
+            onClick={async () => {
+              const blob = await api.exportProject(projectId, "markdown", "manuscript");
+              await download(blob, `${project?.title || "project"}-manuscript.md`);
+            }}
+          >
+            Export MD
+          </button>
+          <button
+            type="button"
+            data-tip={TIPS.exportDocx}
+            onClick={async () => {
+              try {
+                const blob = await api.exportProject(projectId, "docx", "manuscript");
+                await download(blob, `${project?.title || "project"}.docx`);
+              } catch {
+                setError("DOCX export needs pandoc on the server");
+              }
+            }}
+          >
+            Export DOCX
+          </button>
+          <button
+            type="button"
+            data-tip={TIPS.backup}
+            onClick={async () => {
+              const blob = await api.backupProject(projectId);
+              await download(blob, `${project?.title || "project"}.tavern`);
+            }}
+          >
+            Backup
+          </button>
+          <span className="muted topbar-user" style={{ color: "#c5cec8" }}>
+            {user.username}
+          </span>
+          <button type="button" data-tip={TIPS.logout} onClick={() => onLogout()}>
+            Log out
+          </button>
+        </div>
       </header>
 
-      <nav className="module-rail">
+      {compact && anyDrawerOpen(chrome) && (
+        <button
+          type="button"
+          className="chrome-backdrop"
+          aria-label="Close panels"
+          onClick={closeDrawers}
+        />
+      )}
+
+      <nav className="module-rail" aria-hidden={!chrome.modules}>
+        <div className="panel-chrome-head">
+          <strong>Modules</strong>
+          <button
+            type="button"
+            className="ghost"
+            data-tip={TIPS.collapsePanel}
+            onClick={() => setPanel("modules", false)}
+          >
+            Hide
+          </button>
+        </div>
         {MODULES.map((m) => (
           <button
             key={m.id}
@@ -183,6 +337,15 @@ export default function ProjectWorkspace({
             onClick={() => {
               setModule(m.id);
               setCorkboard(false);
+              if (compact) {
+                setChrome((prev) => ({
+                  ...prev,
+                  modules: false,
+                  list: true,
+                  inspector: false,
+                }));
+                focusSnapshot.current = null;
+              }
             }}
           >
             {m.label}
@@ -190,7 +353,18 @@ export default function ProjectWorkspace({
         ))}
       </nav>
 
-      <aside className="element-list">
+      <aside className="element-list" aria-hidden={!chrome.list}>
+        <div className="panel-chrome-head">
+          <strong>Items</strong>
+          <button
+            type="button"
+            className="ghost"
+            data-tip={TIPS.collapsePanel}
+            onClick={() => setPanel("list", false)}
+          >
+            Hide
+          </button>
+        </div>
         <header>
           <input
             placeholder={createLabel}
@@ -226,7 +400,10 @@ export default function ProjectWorkspace({
                 type="button"
                 className={selectedId === el.id ? "active" : ""}
                 data-tip={`Open “${el.title}” in the canvas`}
-                onClick={() => setSelectedId(el.id)}
+                onClick={() => {
+                  setSelectedId(el.id);
+                  if (compact) setPanel("list", false);
+                }}
               >
                 {el.title}
               </button>
@@ -268,7 +445,10 @@ export default function ProjectWorkspace({
             projectId={projectId}
             elements={elements}
             selectedId={selectedId}
-            onSelect={setSelectedId}
+            onSelect={(id) => {
+              setSelectedId(id);
+              if (compact) setPanel("list", false);
+            }}
             canEdit
             onChanged={async () => {
               await refreshElements();
@@ -342,8 +522,18 @@ export default function ProjectWorkspace({
           )}
       </main>
 
-      <aside className="inspector" data-tip={TIPS.inspector}>
-        <h3 style={{ marginTop: 0 }}>Inspector</h3>
+      <aside className="inspector" data-tip={TIPS.inspector} aria-hidden={!chrome.inspector}>
+        <div className="panel-chrome-head">
+          <h3 style={{ margin: 0 }}>Inspector</h3>
+          <button
+            type="button"
+            className="ghost"
+            data-tip={TIPS.collapsePanel}
+            onClick={() => setPanel("inspector", false)}
+          >
+            Hide
+          </button>
+        </div>
         {selected && (
           <div className="stack">
             <div>

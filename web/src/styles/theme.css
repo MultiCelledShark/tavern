@@ -78,28 +78,34 @@ input, textarea, select {
 a { color: var(--moss-dark); }
 
 .app-shell {
+  --rail-w: 220px;
+  --list-w: 260px;
+  --insp-w: 280px;
   display: grid;
-  grid-template-columns: 220px 260px 1fr 280px;
-  grid-template-rows: 56px 1fr;
+  grid-template-columns: var(--rail-w) var(--list-w) minmax(0, 1fr) var(--insp-w);
+  grid-template-rows: auto minmax(0, 1fr);
   height: 100%;
+  min-height: 100dvh;
+  transition: grid-template-columns 0.18s ease;
 }
 
-/* Side panels are display:none in focus mode, so collapse to a single
-   column — keeping `0 0 1fr 0` would auto-place .main-canvas into a
-   zero-width track and squash the editor against the left edge. */
-.app-shell.focus-mode {
-  grid-template-columns: minmax(0, 1fr);
+.app-shell.chrome-modules-off { --rail-w: 0px; }
+.app-shell.chrome-list-off { --list-w: 0px; }
+.app-shell.chrome-inspector-off { --insp-w: 0px; }
+
+.app-shell.chrome-modules-off .module-rail,
+.app-shell.chrome-list-off .element-list,
+.app-shell.chrome-inspector-off .inspector {
+  overflow: hidden;
+  border: none;
+  padding: 0;
+  min-width: 0;
+  pointer-events: none;
+  opacity: 0;
 }
 
-.app-shell.focus-mode .module-rail,
-.app-shell.focus-mode .element-list,
-.app-shell.focus-mode .inspector {
+.app-shell.chrome-tools-off .topbar-tools {
   display: none;
-}
-
-.app-shell.focus-mode .main-canvas {
-  grid-column: 1;
-  width: 100%;
 }
 
 .app-shell.focus-mode .main-canvas .manuscript-layout,
@@ -107,6 +113,51 @@ a { color: var(--moss-dark); }
   width: 100%;
   max-width: 48rem;
   margin-inline: auto;
+}
+
+.panel-chrome-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+  padding: 0.55rem 0.75rem 0.35rem;
+}
+
+.panel-chrome-head .ghost {
+  padding: 0.2rem 0.45rem;
+  font-size: 0.85rem;
+  color: var(--muted);
+}
+
+.chrome-toggles {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.35rem;
+  align-items: center;
+}
+
+.chrome-toggles button {
+  padding: 0.35rem 0.65rem;
+  font-size: 0.9rem;
+}
+
+.topbar-tools {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.45rem;
+  align-items: center;
+}
+
+.topbar-title {
+  min-width: 0;
+  max-width: min(28vw, 14rem);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.chrome-backdrop {
+  display: none;
 }
 
 label.buttonish {
@@ -273,10 +324,13 @@ label.buttonish {
   display: flex;
   align-items: center;
   flex-wrap: wrap;
-  gap: 0.65rem 1rem;
-  padding: 0.55rem 1rem;
+  gap: 0.5rem 0.75rem;
+  padding: 0.55rem 0.85rem;
   background: var(--ink);
   color: var(--stone);
+  position: sticky;
+  top: 0;
+  z-index: 50;
 }
 
 .topbar .brand {
@@ -284,12 +338,18 @@ label.buttonish {
   color: var(--stone);
 }
 
-.topbar .spacer { flex: 1; }
+.topbar .spacer { flex: 1; min-width: 0.5rem; }
 
 .topbar button {
   background: transparent;
   color: var(--stone);
   border-color: rgba(230, 233, 230, 0.25);
+}
+
+.topbar button.primary {
+  background: color-mix(in srgb, var(--moss) 75%, #000);
+  border-color: rgba(230, 233, 230, 0.35);
+  color: #f5f8f6;
 }
 
 .module-rail {
@@ -611,32 +671,186 @@ label.buttonish {
   transform: translate(0, -50%);
 }
 
-.module-rail,
-.element-list,
-.inspector,
-.topbar,
-.main-canvas {
-  overflow: visible;
-}
-
 .module-rail {
   overflow-y: auto;
+  min-width: 0;
 }
 
 .element-list,
 .inspector,
 .main-canvas {
   overflow: auto;
+  min-width: 0;
 }
 
-@media (max-width: 960px) {
-  .app-shell {
-    grid-template-columns: 1fr;
-    grid-template-rows: 56px auto auto 1fr auto;
+.projects-page .row {
+  flex-wrap: wrap;
+}
+
+.projects-page form.row > input {
+  flex: 1 1 12rem;
+  min-width: 0;
+}
+
+@media (max-width: 1100px) {
+  .app-shell.is-compact {
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-rows: auto minmax(0, 1fr);
   }
-  .module-rail, .element-list, .inspector {
+
+  .app-shell.is-compact .main-canvas {
+    grid-column: 1;
+    grid-row: 2;
+    padding: 0.85rem;
+  }
+
+  .app-shell.is-compact .module-rail,
+  .app-shell.is-compact .element-list,
+  .app-shell.is-compact .inspector {
+    position: fixed;
+    top: 0;
+    bottom: 0;
+    z-index: 45;
+    width: min(20rem, 88vw);
+    max-width: 100%;
+    max-height: none;
+    opacity: 1;
+    pointer-events: auto;
+    padding: 0;
     border: none;
-    border-bottom: 1px solid var(--border);
-    max-height: 180px;
+    box-shadow: 0 12px 40px rgba(28, 36, 33, 0.28);
+    transition: transform 0.2s ease;
+    overflow: auto;
+  }
+
+  .app-shell.is-compact .module-rail {
+    left: 0;
+    transform: translateX(-105%);
+    background: color-mix(in srgb, var(--paper) 88%, var(--moss) 12%);
+  }
+
+  .app-shell.is-compact .element-list {
+    left: 0;
+    transform: translateX(-105%);
+    background: var(--paper);
+  }
+
+  .app-shell.is-compact .inspector {
+    right: 0;
+    left: auto;
+    transform: translateX(105%);
+    background: var(--paper);
+  }
+
+  .app-shell.is-compact.chrome-modules-on .module-rail,
+  .app-shell.is-compact.chrome-list-on .element-list {
+    transform: translateX(0);
+  }
+
+  .app-shell.is-compact.chrome-inspector-on .inspector {
+    transform: translateX(0);
+  }
+
+  .app-shell.is-compact.chrome-modules-off .module-rail,
+  .app-shell.is-compact.chrome-list-off .element-list,
+  .app-shell.is-compact.chrome-inspector-off .inspector {
+    pointer-events: none;
+  }
+
+  .app-shell.is-compact .chrome-backdrop {
+    display: block;
+    position: fixed;
+    inset: 0;
+    z-index: 40;
+    border: none;
+    border-radius: 0;
+    background: rgba(28, 36, 33, 0.42);
+    padding: 0;
+  }
+
+  .app-shell.is-compact .topbar-title {
+    max-width: 40vw;
+  }
+
+  .app-shell.is-compact .chrome-toggles {
+    width: 100%;
+    order: 5;
+  }
+
+  .app-shell.is-compact .topbar-tools {
+    width: 100%;
+    order: 6;
+  }
+
+  .app-shell.is-compact .panel-chrome-head {
+    padding-top: calc(0.55rem + env(safe-area-inset-top, 0px));
+  }
+
+  .relationship-canvas {
+    height: min(70vh, 32rem);
+  }
+
+  .map-stage,
+  .map-empty {
+    min-height: 45vh;
+  }
+
+  .panel-canvas {
+    min-height: 55vh;
+  }
+}
+
+@media (max-width: 720px) {
+  .topbar .brand {
+    font-size: 1.15rem;
+  }
+
+  .chrome-toggles button {
+    flex: 1 1 auto;
+    min-width: calc(33% - 0.4rem);
+    text-align: center;
+  }
+
+  .login-page {
+    padding: 1rem;
+  }
+
+  .login-card {
+    padding: 1.35rem;
+  }
+
+  .login-card h1 {
+    font-size: 2rem;
+  }
+
+  .projects-page {
+    padding: 1.15rem 0.85rem;
+  }
+
+  .editor-surface {
+    padding: 0.9rem 1rem;
+    min-height: 50vh;
+  }
+
+  .attr-row,
+  .stat-row,
+  .list-row {
+    grid-template-columns: 1fr;
+  }
+
+  .manuscript-toolbar input {
+    max-width: none !important;
+    width: 100%;
+  }
+}
+
+/* Prefer hover tips on fine pointers; avoid sticky fake tooltips on touch */
+@media (hover: none) {
+  [data-tip]:hover::after {
+    opacity: 0;
+  }
+
+  [data-tip]:focus-visible::after {
+    opacity: 1;
   }
 }

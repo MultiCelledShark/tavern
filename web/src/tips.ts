@@ -1,7 +1,12 @@
 /** Short hover tips for self-guided UI discovery. */
 export const TIPS = {
   brand: "Return to your project list",
-  focus: "Hide side panels so the writing canvas fills the screen",
+  focus: "Collapse Modules, Items, and Inspector — tap again to restore",
+  chromeModules: "Show or hide the module rail (Manuscript, Characters, …)",
+  chromeList: "Show or hide the item list for the current module",
+  chromeInspector: "Show or hide the inspector (delete, sharing, bible)",
+  chromeTools: "Show or hide export, backup, and account actions",
+  collapsePanel: "Hide this panel — reopen from the top bar toggles",
   exportMd: "Download the manuscript as Markdown",
   exportDocx: "Download the manuscript as DOCX (needs pandoc on the server)",
   backup: "Download a full .tavern project backup zip",

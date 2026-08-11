@@ -11,7 +11,7 @@
           "panel_type": "text",
           "title": "How to tour",
           "content": {
-            "markdown": "Welcome to Tavern.\n\n1. Use the **left rail** to switch modules (hover any control for a short tip).\n2. Pick an item in the **second column** to open it in the canvas.\n3. Try **Focus** in the top bar while editing the manuscript chapter.\n4. On Characters / Locations / Systems, drag panels on the canvas.\n5. Open **Relationships** to connect characters on the graph.\n6. **Maps** and **Timeline** show places and chronology.\n\nWhen you are done exploring, create your own project from the home page — this tour is safe to delete."
+            "markdown": "Welcome to Tavern.\n\n1. Use **Modules / Items / Inspector / Tools** in the top bar to show or hide each menu (layout is remembered).\n2. On phones and tablets, those menus open as drawers over the canvas.\n3. Pick an item, then try **Focus** to clear the side menus while writing.\n4. On Characters / Locations / Systems, drag panels on the canvas.\n5. Open **Relationships** to connect characters on the graph.\n6. **Maps** and **Timeline** show places and chronology.\n\nWhen you are done exploring, create your own project from the home page — this tour is safe to delete."
           }
         },
         {
