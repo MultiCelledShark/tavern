@@ -1,24 +1,10 @@
-import {
-  useCallback,
-  useEffect,
-  useMemo,
-  useRef,
-  useState,
-  type PointerEvent as ReactPointerEvent,
-} from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { api, Element } from "../api/client";
 import { TIPS } from "../tips";
-
-const CARD_W = 200;
-const CARD_H = 132;
-const GAP = 16;
-const COLS = 4;
 
 export type CorkItem = {
   id: string;
   title: string;
-  x: number;
-  y: number;
   sort_order: number;
   parent_id: string | null;
   metadata: Record<string, unknown>;
@@ -26,41 +12,16 @@ export type CorkItem = {
 
 type CorkSnapshot = CorkItem[];
 
-function readPos(meta: Record<string, unknown>): { x: number; y: number } | null {
-  const raw = meta.corkboard;
-  if (!raw || typeof raw !== "object") return null;
-  const o = raw as Record<string, unknown>;
-  const x = Number(o.x);
-  const y = Number(o.y);
-  if (!Number.isFinite(x) || !Number.isFinite(y)) return null;
-  return { x, y };
-}
-
-function autoLayout(index: number): { x: number; y: number } {
-  const col = index % COLS;
-  const row = Math.floor(index / COLS);
-  return {
-    x: GAP + col * (CARD_W + GAP),
-    y: GAP + row * (CARD_H + GAP),
-  };
-}
-
 function fromElements(elements: Element[]): CorkItem[] {
-  const sorted = [...elements].sort(
-    (a, b) => a.sort_order - b.sort_order || a.title.localeCompare(b.title)
-  );
-  return sorted.map((el, i) => {
-    const pos = readPos(el.metadata) || autoLayout(i);
-    return {
+  return [...elements]
+    .sort((a, b) => a.sort_order - b.sort_order || a.title.localeCompare(b.title))
+    .map((el, i) => ({
       id: el.id,
       title: el.title,
-      x: pos.x,
-      y: pos.y,
-      sort_order: el.sort_order,
+      sort_order: i,
       parent_id: el.parent_id,
       metadata: el.metadata,
-    };
-  });
+    }));
 }
 
 function cloneItems(items: CorkItem[]): CorkItem[] {
@@ -69,22 +30,30 @@ function cloneItems(items: CorkItem[]): CorkItem[] {
 
 function sameLayout(a: CorkItem[], b: CorkItem[]): boolean {
   if (a.length !== b.length) return false;
-  for (const x of a) {
-    const y = b.find((it) => it.id === x.id);
-    if (!y) return false;
-    if (x.title !== y.title || x.x !== y.x || x.y !== y.y || x.sort_order !== y.sort_order) {
-      return false;
-    }
-  }
-  return true;
+  const as = [...a].sort((x, y) => x.sort_order - y.sort_order);
+  const bs = [...b].sort((x, y) => x.sort_order - y.sort_order);
+  return as.every(
+    (item, i) => item.id === bs[i]?.id && item.title === bs[i]?.title && item.sort_order === bs[i]?.sort_order
+  );
 }
 
-function sortOrdersFromPositions(items: CorkItem[]): CorkItem[] {
-  const ranked = [...items].sort((a, b) => a.y - b.y || a.x - b.x || a.title.localeCompare(b.title));
-  return items.map((it) => ({
-    ...it,
-    sort_order: ranked.findIndex((r) => r.id === it.id),
-  }));
+/** Move `fromId` into the grid slot currently occupied by `toId`. */
+function moveToSlot(items: CorkItem[], fromId: string, toId: string): CorkItem[] {
+  if (fromId === toId) return items;
+  const sorted = [...items].sort((a, b) => a.sort_order - b.sort_order);
+  const from = sorted.findIndex((it) => it.id === fromId);
+  const to = sorted.findIndex((it) => it.id === toId);
+  if (from < 0 || to < 0) return items;
+  const next = [...sorted];
+  const [moved] = next.splice(from, 1);
+  next.splice(to, 0, moved);
+  return next.map((it, i) => ({ ...it, sort_order: i }));
+}
+
+function stripCorkMeta(meta: Record<string, unknown>): Record<string, unknown> {
+  const next = { ...meta };
+  delete next.corkboard;
+  return next;
 }
 
 export default function Corkboard({
@@ -99,15 +68,7 @@ export default function Corkboard({
   const itemsRef = useRef<CorkItem[]>([]);
   const baselineRef = useRef<CorkSnapshot>([]);
   const editStartTitle = useRef<Record<string, string>>({});
-  const boardRef = useRef<HTMLDivElement>(null);
-  const dragRef = useRef<{
-    id: string;
-    grabX: number;
-    grabY: number;
-    startX: number;
-    startY: number;
-    moved: boolean;
-  } | null>(null);
+  const dragIdRef = useRef<string | null>(null);
 
   const [items, setItems] = useState<CorkItem[]>(() => fromElements(elements));
   const [past, setPast] = useState<CorkSnapshot[]>([]);
@@ -115,39 +76,26 @@ export default function Corkboard({
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [draggingId, setDraggingId] = useState<string | null>(null);
+  const [overId, setOverId] = useState<string | null>(null);
 
   itemsRef.current = items;
+
+  const ordered = [...items].sort((a, b) => a.sort_order - b.sort_order);
 
   useEffect(() => {
     const next = fromElements(elements);
     setItems((prev) => {
       if (sameLayout(prev, next)) return prev;
-      return next.map((n, i) => {
+      // Keep in-progress titles while syncing server order for shared ids.
+      return next.map((n) => {
         const old = prev.find((p) => p.id === n.id);
-        if (old) {
-          return {
-            ...n,
-            x: old.x,
-            y: old.y,
-            title: old.title,
-            sort_order: old.sort_order,
-            metadata: { ...n.metadata, corkboard: { x: old.x, y: old.y } },
-          };
-        }
-        const pos = readPos(n.metadata) || autoLayout(i);
-        return { ...n, x: pos.x, y: pos.y };
+        return old ? { ...n, title: old.title } : n;
       });
     });
     if (!baselineRef.current.length && next.length) {
       baselineRef.current = cloneItems(next);
     }
   }, [elements]);
-
-  const boardSize = useMemo(() => {
-    const maxX = items.reduce((m, it) => Math.max(m, it.x + CARD_W), 480);
-    const maxY = items.reduce((m, it) => Math.max(m, it.y + CARD_H), 360);
-    return { width: maxX + GAP, height: maxY + GAP };
-  }, [items]);
 
   const persist = useCallback(
     async (next: CorkItem[]) => {
@@ -160,10 +108,7 @@ export default function Corkboard({
               title: it.title,
               parent_id: it.parent_id,
               sort_order: it.sort_order,
-              metadata: {
-                ...it.metadata,
-                corkboard: { x: it.x, y: it.y },
-              },
+              metadata: stripCorkMeta(it.metadata),
             })
           )
         );
@@ -211,56 +156,10 @@ export default function Corkboard({
     await persist(baseline);
   }
 
-  function pointerToBoard(e: ReactPointerEvent): { x: number; y: number } {
-    const board = boardRef.current;
-    if (!board) return { x: e.clientX, y: e.clientY };
-    const rect = board.getBoundingClientRect();
-    return {
-      x: e.clientX - rect.left + board.scrollLeft,
-      y: e.clientY - rect.top + board.scrollTop,
-    };
-  }
-
-  function onPointerDown(e: ReactPointerEvent, id: string) {
-    if (e.button !== 0) return;
-    const target = e.target as HTMLElement;
-    if (target.closest("input, textarea, button.open-chapter")) return;
-    const card = itemsRef.current.find((it) => it.id === id);
-    if (!card) return;
-    (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId);
-    const pt = pointerToBoard(e);
-    dragRef.current = {
-      id,
-      grabX: pt.x - card.x,
-      grabY: pt.y - card.y,
-      startX: card.x,
-      startY: card.y,
-      moved: false,
-    };
-    setDraggingId(id);
-  }
-
-  function onPointerMove(e: ReactPointerEvent) {
-    const drag = dragRef.current;
-    if (!drag) return;
-    const pt = pointerToBoard(e);
-    const x = Math.max(0, pt.x - drag.grabX);
-    const y = Math.max(0, pt.y - drag.grabY);
-    if (Math.hypot(x - drag.startX, y - drag.startY) > 4) drag.moved = true;
-    setItems((all) => all.map((it) => (it.id === drag.id ? { ...it, x, y } : it)));
-  }
-
-  async function onPointerUp() {
-    const drag = dragRef.current;
-    dragRef.current = null;
-    setDraggingId(null);
-    if (!drag || !drag.moved) return;
-
-    const current = itemsRef.current;
-    const before = current.map((it) =>
-      it.id === drag.id ? { ...it, x: drag.startX, y: drag.startY } : { ...it }
-    );
-    const next = sortOrdersFromPositions(current);
+  async function applyMove(fromId: string, toId: string) {
+    const before = cloneItems(itemsRef.current);
+    const next = moveToSlot(before, fromId, toId);
+    if (sameLayout(before, next)) return;
     pushHistory(before);
     setItems(next);
     await persist(next);
@@ -290,7 +189,7 @@ export default function Corkboard({
     <div className="corkboard-wrap">
       <div className="corkboard-toolbar row">
         <h2 style={{ margin: 0 }}>Corkboard</h2>
-        <span className="muted">Drag cards to rearrange · edit titles inline</span>
+        <span className="muted">Drag a card onto another slot to reorder · edit titles inline</span>
         <div className="spacer" />
         <button type="button" data-tip={TIPS.corkUndo} disabled={!past.length || busy} onClick={() => void undo()}>
           Undo
@@ -310,27 +209,57 @@ export default function Corkboard({
       </div>
       {error && <p className="error">{error}</p>}
 
-      <div
-        className="corkboard"
-        ref={boardRef}
-        style={{ width: boardSize.width, minHeight: boardSize.height }}
-      >
-        {!items.length && <p className="muted">Create a manuscript chapter to pin it here.</p>}
-        {items.map((it) => (
+      <div className="corkboard">
+        {!ordered.length && <p className="muted">Create a manuscript chapter to place it here.</p>}
+        {ordered.map((it) => (
           <article
             key={it.id}
-            className={`cork-card${draggingId === it.id ? " dragging" : ""}`}
-            style={{ left: it.x, top: it.y, width: CARD_W, minHeight: CARD_H }}
-            onPointerDown={(e) => onPointerDown(e, it.id)}
-            onPointerMove={onPointerMove}
-            onPointerUp={() => void onPointerUp()}
-            onPointerCancel={() => void onPointerUp()}
+            className={[
+              "cork-card",
+              draggingId === it.id ? "dragging" : "",
+              overId === it.id && draggingId && draggingId !== it.id ? "drop-target" : "",
+            ]
+              .filter(Boolean)
+              .join(" ")}
+            draggable
             data-tip={TIPS.corkDrag}
+            onDragStart={(e) => {
+              if ((e.target as HTMLElement).closest("input, button.open-chapter")) {
+                e.preventDefault();
+                return;
+              }
+              dragIdRef.current = it.id;
+              setDraggingId(it.id);
+              e.dataTransfer.effectAllowed = "move";
+              e.dataTransfer.setData("text/plain", it.id);
+            }}
+            onDragEnd={() => {
+              dragIdRef.current = null;
+              setDraggingId(null);
+              setOverId(null);
+            }}
+            onDragOver={(e) => {
+              e.preventDefault();
+              e.dataTransfer.dropEffect = "move";
+              if (dragIdRef.current && dragIdRef.current !== it.id) setOverId(it.id);
+            }}
+            onDragLeave={() => {
+              setOverId((id) => (id === it.id ? null : id));
+            }}
+            onDrop={(e) => {
+              e.preventDefault();
+              const fromId = e.dataTransfer.getData("text/plain") || dragIdRef.current;
+              setOverId(null);
+              setDraggingId(null);
+              dragIdRef.current = null;
+              if (!fromId) return;
+              void applyMove(fromId, it.id);
+            }}
           >
-            <div className="cork-pin" aria-hidden />
             <input
               className="cork-title"
               value={it.title}
+              draggable={false}
               data-tip={TIPS.corkRename}
               onFocus={() => {
                 editStartTitle.current[it.id] = it.title;
@@ -342,6 +271,7 @@ export default function Corkboard({
               onKeyDown={(e) => {
                 if (e.key === "Enter") (e.target as HTMLInputElement).blur();
               }}
+              onPointerDown={(e) => e.stopPropagation()}
             />
             <button
               type="button"
