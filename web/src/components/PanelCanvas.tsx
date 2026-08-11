@@ -14,6 +14,17 @@ const PANEL_TYPES = [
   "links",
 ] as const;
 
+/** Minimum grid units so panels fit their primary inputs (rowHeight ≈ 36px). */
+const PANEL_MIN: Record<string, { minW: number; minH: number }> = {
+  text: { minW: 4, minH: 6 },
+  attributes: { minW: 4, minH: 4 },
+  stats: { minW: 4, minH: 4 },
+  list: { minW: 4, minH: 4 },
+  table: { minW: 4, minH: 5 },
+  image: { minW: 3, minH: 5 },
+  links: { minW: 3, minH: 4 },
+};
+
 type ImageRef = { url: string; caption?: string };
 
 export default function PanelCanvas({
@@ -64,13 +75,18 @@ export default function PanelCanvas({
 
   const layout: Layout[] = useMemo(
     () =>
-      panels.map((p) => ({
-        i: p.id,
-        x: Math.round(p.layout.x),
-        y: Math.round(p.layout.y),
-        w: Math.max(2, Math.round(p.layout.w)),
-        h: Math.max(2, Math.round(p.layout.h)),
-      })),
+      panels.map((p) => {
+        const mins = PANEL_MIN[p.panel_type] || { minW: 3, minH: 4 };
+        return {
+          i: p.id,
+          x: Math.round(p.layout.x),
+          y: Math.round(p.layout.y),
+          w: Math.max(mins.minW, Math.round(p.layout.w)),
+          h: Math.max(mins.minH, Math.round(p.layout.h)),
+          minW: mins.minW,
+          minH: mins.minH,
+        };
+      }),
     [panels]
   );
 

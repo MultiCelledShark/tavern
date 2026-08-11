@@ -9,7 +9,7 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::sync::Arc;
 use tavern_core::{
-    default_panel_layout, Element, GrantRole, ModuleType, PanelLayout, PanelType, User,
+    default_panel_layout_for, Element, GrantRole, ModuleType, PanelLayout, PanelType, User,
 };
 use tavern_export::{
     compile_manuscript_markdown, compile_world_bible_markdown, elements_to_intermediate,
@@ -529,7 +529,9 @@ async fn create_panel(
     require_edit(&state, &user, el.project_id).await?;
     let ptype = PanelType::parse(&body.panel_type).ok_or(ApiError::bad("invalid panel_type"))?;
     let sort = body.sort_order.unwrap_or(0);
-    let layout = body.layout.unwrap_or_else(|| default_panel_layout(sort as usize));
+    let layout = body
+        .layout
+        .unwrap_or_else(|| default_panel_layout_for(ptype.as_str(), sort as usize));
     let panel = state
         .db
         .create_panel(
@@ -1077,7 +1079,7 @@ async fn import_project(
                 let layout = panel
                     .layout
                     .clone()
-                    .unwrap_or_else(|| default_panel_layout(i));
+                    .unwrap_or_else(|| default_panel_layout_for(ptype.as_str(), i));
                 state
                     .db
                     .create_panel(

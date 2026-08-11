@@ -438,6 +438,20 @@ label.buttonish {
   min-height: 70vh;
 }
 
+.panel-body {
+  padding: 0.65rem;
+  overflow: auto;
+  flex: 1;
+  font-size: 0.95rem;
+  min-height: 0;
+}
+
+.panel-body textarea {
+  min-height: 8.5rem;
+  resize: vertical;
+  font-family: var(--font-body);
+}
+
 .react-grid-item {
   background: var(--panel);
   border: 1px solid var(--border);
@@ -446,6 +460,8 @@ label.buttonish {
   display: flex;
   flex-direction: column;
   box-shadow: 0 4px 14px rgba(28, 36, 33, 0.05);
+  /* Keep room for header + at least one input row / textarea */
+  min-height: 10.5rem;
 }
 
 .panel-header {
@@ -456,24 +472,12 @@ label.buttonish {
   border-bottom: 1px solid var(--border);
   background: color-mix(in srgb, var(--stone) 70%, white);
   cursor: grab;
+  flex-shrink: 0;
 }
 
 .panel-header .drag-handle {
   color: var(--muted);
   font-size: 0.8rem;
-}
-
-.panel-body {
-  padding: 0.65rem;
-  overflow: auto;
-  flex: 1;
-  font-size: 0.95rem;
-}
-
-.panel-body textarea {
-  min-height: 120px;
-  resize: vertical;
-  font-family: var(--font-body);
 }
 
 .attr-row, .stat-row, .list-row {

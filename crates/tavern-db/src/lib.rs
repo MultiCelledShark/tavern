@@ -10,7 +10,7 @@ use sqlx::{Row, SqlitePool};
 use std::path::Path;
 use std::str::FromStr;
 use tavern_core::{
-    default_panel_layout, default_template_pages, default_theme, Element, ElementLink, GrantRole,
+    default_panel_layout_for, default_template_pages, default_theme, Element, ElementLink, GrantRole,
     ModuleType, Page, Panel, PanelLayout, PanelType, Project, ProjectGrant, Template, User,
 };
 use uuid::Uuid;
@@ -517,7 +517,7 @@ impl Db {
                     let layout = p
                         .get("layout")
                         .and_then(|v| serde_json::from_value::<PanelLayout>(v.clone()).ok())
-                        .unwrap_or_else(|| default_panel_layout(i));
+                        .unwrap_or_else(|| default_panel_layout_for(ptype.as_str(), i));
                     self.create_panel(page.id, ptype, &ptitle, None, layout, content, i as i64)
                         .await?;
                 }

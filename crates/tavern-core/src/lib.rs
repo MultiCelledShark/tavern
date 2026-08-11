@@ -339,13 +339,27 @@ pub fn default_theme() -> serde_json::Value {
 }
 
 pub fn default_panel_layout(index: usize) -> PanelLayout {
+    default_panel_layout_for("text", index)
+}
+
+/// Default grid size large enough for each panel's primary controls
+/// (rowHeight ≈ 36px in the UI).
+pub fn default_panel_layout_for(panel_type: &str, index: usize) -> PanelLayout {
     let col = (index % 2) as f64;
+    let (w, h) = match panel_type {
+        "text" => (6.0, 8.0),
+        "attributes" | "stats" | "list" => (6.0, 6.0),
+        "table" => (6.0, 6.0),
+        "image" => (6.0, 7.0),
+        "links" => (6.0, 5.0),
+        _ => (6.0, 6.0),
+    };
     let row = (index / 2) as f64;
     PanelLayout {
         x: col * 6.0,
-        y: row * 4.0,
-        w: 5.5,
-        h: 3.5,
+        y: row * (h + 0.5),
+        w,
+        h,
     }
 }
 
