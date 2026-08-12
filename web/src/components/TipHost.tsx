@@ -14,7 +14,7 @@ type TipState = {
   anchor: DOMRect;
 };
 
-const SHOW_DELAY_MS = 280;
+const SHOW_DELAY_MS = 3000;
 const HIDE_DELAY_MS = 180;
 const AUTO_DISMISS_MS = 3000;
 const GAP = 8;
@@ -96,6 +96,7 @@ export default function TipHost() {
   const [coords, setCoords] = useState<{ top: number; left: number } | null>(null);
   const tipRef = useRef<HTMLDivElement | null>(null);
   const anchorRef = useRef<HTMLElement | null>(null);
+  const pendingAnchorRef = useRef<HTMLElement | null>(null);
   const suppressUntilLeaveRef = useRef<HTMLElement | null>(null);
   const showTimer = useRef<number | null>(null);
   const hideTimer = useRef<number | null>(null);
@@ -110,6 +111,7 @@ export default function TipHost() {
         window.clearTimeout(showTimer.current);
         showTimer.current = null;
       }
+      pendingAnchorRef.current = null;
     }
 
     function clearHide() {
@@ -160,7 +162,14 @@ export default function TipHost() {
       const text = el.getAttribute("data-tip")?.trim();
       if (!text) return;
 
+      // Already visible for this anchor — keep it.
+      if (anchorRef.current === el) return;
+      // Already waiting on this anchor's hover delay.
+      if (pendingAnchorRef.current === el && showTimer.current != null) return;
+
       const openNow = () => {
+        pendingAnchorRef.current = null;
+        showTimer.current = null;
         if (!el.isConnected) return;
         if (tipsDisabled()) return;
         if (suppressUntilLeaveRef.current === el) return;
@@ -173,15 +182,18 @@ export default function TipHost() {
         scheduleDecay();
       };
 
-      // Switching tips: update immediately. First tip: short delay.
+      // Moving to a different tip target: hide any current tip and restart the
+      // full hover delay so tips never flash instantly.
       if (anchorRef.current && anchorRef.current !== el) {
-        clearShow();
-        openNow();
-        return;
+        clearDecay();
+        overTip.current = false;
+        anchorRef.current = null;
+        setTip(null);
+        setCoords(null);
       }
-      if (anchorRef.current === el) return;
 
       clearShow();
+      pendingAnchorRef.current = el;
       showTimer.current = window.setTimeout(openNow, SHOW_DELAY_MS);
     }
 
@@ -208,9 +220,15 @@ export default function TipHost() {
         suppressUntilLeaveRef.current = null;
       }
       const el = leaving;
-      if (!el || el !== anchorRef.current) return;
+      if (!el) return;
       if (related instanceof Node && el.contains(related)) return;
       if (related instanceof Node && tipRef.current?.contains(related)) return;
+
+      // Pointer left before the hover delay finished — cancel the pending tip.
+      if (pendingAnchorRef.current === el) {
+        clearShow();
+      }
+      if (el !== anchorRef.current) return;
       hideSoon();
     }
 
