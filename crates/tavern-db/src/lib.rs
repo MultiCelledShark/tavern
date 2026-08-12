@@ -868,6 +868,56 @@ impl Db {
         Ok(())
     }
 
+    /// Rewrite `[[Module:old_title]]` tokens across every manuscript in a project.
+    pub async fn rewrite_wikilinks_in_project(
+        &self,
+        project_id: Uuid,
+        module: ModuleType,
+        old_title: &str,
+        new_title: &str,
+    ) -> Result<usize> {
+        use tavern_core::rewrite_wikilinks;
+
+        if old_title == new_title || old_title.is_empty() {
+            return Ok(0);
+        }
+        let rows = sqlx::query(
+            "SELECT mb.element_id AS element_id, mb.markdown AS markdown, mb.word_goal AS word_goal
+             FROM manuscript_bodies mb
+             INNER JOIN elements e ON e.id = mb.element_id
+             WHERE e.project_id = ?",
+        )
+        .bind(project_id.to_string())
+        .fetch_all(&self.pool)
+        .await?;
+
+        let mut updated = 0usize;
+        let now = Utc::now().to_rfc3339();
+        for row in rows {
+            let element_id: String = row.get("element_id");
+            let markdown: String = row.get("markdown");
+            let word_goal: i64 = row.get("word_goal");
+            let next = rewrite_wikilinks(&markdown, module, old_title, new_title);
+            if next == markdown {
+                continue;
+            }
+            sqlx::query(
+                "UPDATE manuscript_bodies SET markdown = ?, word_goal = ?, updated_at = ? WHERE element_id = ?",
+            )
+            .bind(&next)
+            .bind(word_goal)
+            .bind(&now)
+            .bind(&element_id)
+            .execute(&self.pool)
+            .await?;
+            updated += 1;
+        }
+        if updated > 0 {
+            self.touch_project(project_id).await?;
+        }
+        Ok(updated)
+    }
+
     pub async fn save_template(
         &self,
         owner_id: Uuid,

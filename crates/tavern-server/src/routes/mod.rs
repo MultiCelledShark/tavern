@@ -410,12 +410,18 @@ async fn update_element(
         .await?
         .ok_or(ApiError::not_found("element"))?;
     require_edit(&state, &user, el.project_id).await?;
-    Ok(Json(
-        state
+    let updated = state
+        .db
+        .update_element(id, &body.title, body.parent_id, body.sort_order, body.metadata)
+        .await?;
+    // Keep manuscript [[Module:Title]] tokens in sync when a linked element is renamed.
+    if el.title != body.title {
+        let _ = state
             .db
-            .update_element(id, &body.title, body.parent_id, body.sort_order, body.metadata)
-            .await?,
-    ))
+            .rewrite_wikilinks_in_project(el.project_id, el.module_type, &el.title, &body.title)
+            .await?;
+    }
+    Ok(Json(updated))
 }
 
 async fn delete_element(

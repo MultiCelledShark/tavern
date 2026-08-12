@@ -663,7 +663,7 @@ export default function ProjectWorkspace({
                 if (!confirm("Delete this element?")) return;
                 await api.deleteElement(selected.id);
                 await refreshElements();
-                setAllElements(await api.elements(projectId));
+                await refreshAllElements();
               }}
             >
               Delete

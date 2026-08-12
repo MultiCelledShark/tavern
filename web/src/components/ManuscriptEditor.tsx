@@ -1,8 +1,8 @@
 import { useEditor, EditorContent } from "@tiptap/react";
 import StarterKit from "@tiptap/starter-kit";
 import Placeholder from "@tiptap/extension-placeholder";
-import { useEffect, useState } from "react";
-import { api, Element } from "../api/client";
+import { useEffect, useRef, useState } from "react";
+import { api, Element, ModuleType } from "../api/client";
 import { TIPS } from "../tips";
 import TipHint from "./TipHint";
 
@@ -23,6 +23,7 @@ export default function ManuscriptEditor({
   const [wordCount, setWordCount] = useState(0);
   const [sourceMode, setSourceMode] = useState(false);
   const [saved, setSaved] = useState(true);
+  const titleByIdRef = useRef<Map<string, { module_type: ModuleType; title: string }>>(new Map());
 
   const editor = useEditor({
     extensions: [
@@ -53,6 +54,56 @@ export default function ManuscriptEditor({
       setSaved(true);
     })();
   }, [element.id]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // When the project-wide catalog refreshes (e.g. leaving another module after a
+  // rename), rewrite any [[Module:OldTitle]] tokens still in the open chapter.
+  useEffect(() => {
+    const prev = titleByIdRef.current;
+    const next = new Map(
+      allElements.map((e) => [e.id, { module_type: e.module_type, title: e.title }] as const)
+    );
+    const renames: { module_type: ModuleType; oldTitle: string; newTitle: string }[] = [];
+    for (const [id, cur] of next) {
+      const was = prev.get(id);
+      if (was && was.title !== cur.title) {
+        renames.push({
+          module_type: cur.module_type,
+          oldTitle: was.title,
+          newTitle: cur.title,
+        });
+      }
+    }
+    titleByIdRef.current = next;
+    if (!renames.length) return;
+
+    const apply = (text: string) =>
+      renames.reduce(
+        (acc, r) => rewriteWikilinks(acc, r.module_type, r.oldTitle, r.newTitle),
+        text
+      );
+
+    if (sourceMode) {
+      setMarkdown((m) => {
+        const updated = apply(m);
+        if (updated !== m) setSaved(false);
+        return updated;
+      });
+      return;
+    }
+    if (!editor) return;
+    const html = editor.getHTML();
+    const updated = apply(html);
+    if (updated !== html) {
+      const { from, to } = editor.state.selection;
+      editor.commands.setContent(updated);
+      editor.commands.setTextSelection({
+        from: Math.min(from, editor.state.doc.content.size),
+        to: Math.min(to, editor.state.doc.content.size),
+      });
+      setMarkdown(updated);
+      setSaved(false);
+    }
+  }, [allElements, editor, sourceMode]);
 
   async function save() {
     const md = sourceMode ? markdown : htmlToMarkdown(editor?.getHTML() || markdown);
@@ -154,6 +205,25 @@ export default function ManuscriptEditor({
 
 function capitalize(s: string) {
   return s.charAt(0).toUpperCase() + s.slice(1);
+}
+
+function rewriteWikilinks(
+  text: string,
+  moduleType: ModuleType,
+  oldTitle: string,
+  newTitle: string
+): string {
+  if (!oldTitle || oldTitle === newTitle) return text;
+  const label = capitalize(moduleType);
+  const oldToken = `[[${label}:${oldTitle}]]`;
+  const newToken = `[[${label}:${newTitle}]]`;
+  let out = text.split(oldToken).join(newToken);
+  const oldLower = `[[${moduleType}:${oldTitle}]]`;
+  const newLower = `[[${moduleType}:${newTitle}]]`;
+  if (oldLower !== oldToken) {
+    out = out.split(oldLower).join(newLower);
+  }
+  return out;
 }
 
 function markdownToSimpleHtml(md: string): string {
