@@ -1,6 +1,3 @@
-import { useEditor, EditorContent } from "@tiptap/react";
-import StarterKit from "@tiptap/starter-kit";
-import Placeholder from "@tiptap/extension-placeholder";
 import { useEffect, useRef, useState } from "react";
 import { api, Element, ModuleType } from "../api/client";
 import { TIPS } from "../tips";
@@ -23,37 +20,53 @@ export default function ManuscriptEditor({
   const [wordCount, setWordCount] = useState(0);
   const [sourceMode, setSourceMode] = useState(false);
   const [saved, setSaved] = useState(true);
+  const wysiwygRef = useRef<HTMLDivElement | null>(null);
   const titleByIdRef = useRef<Map<string, { module_type: ModuleType; title: string }>>(new Map());
+  const loadedIdRef = useRef<string | null>(null);
 
-  const editor = useEditor({
-    extensions: [
-      StarterKit,
-      Placeholder.configure({ placeholder: "Start writing your chapter…" }),
-    ],
-    content: "",
-    onUpdate: ({ editor: ed }) => {
-      const text = ed.getText();
-      setWordCount(text.split(/\s+/).filter(Boolean).length);
-      setMarkdown(ed.getHTML());
-      setSaved(false);
-    },
-  });
+  function setWysiwygHtml(html: string) {
+    const el = wysiwygRef.current;
+    if (!el) return;
+    el.innerHTML = html || "<p><br></p>";
+  }
+
+  function readWysiwygHtml() {
+    return wysiwygRef.current?.innerHTML ?? "";
+  }
+
+  function readWysiwygText() {
+    return wysiwygRef.current?.innerText ?? "";
+  }
+
+  function countWords(text: string) {
+    return text.split(/\s+/).filter(Boolean).length;
+  }
 
   useEffect(() => {
     setTitle(element.title);
+    loadedIdRef.current = null;
     (async () => {
       const body = await api.manuscript(element.id);
       setMarkdown(body.markdown);
       setWordGoal(body.word_goal);
       setWordCount(body.word_count);
-      if (editor) {
-        // Prefer treating stored content as markdown-ish plain/HTML hybrid
-        const html = markdownToSimpleHtml(body.markdown);
-        editor.commands.setContent(html || "<p></p>");
-      }
+      loadedIdRef.current = element.id;
+      // Apply HTML after paint so the contentEditable node exists when not in source mode.
+      requestAnimationFrame(() => {
+        if (!sourceMode) {
+          setWysiwygHtml(markdownToSimpleHtml(body.markdown));
+        }
+      });
       setSaved(true);
     })();
   }, [element.id]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // When leaving source mode, push markdown into the contentEditable surface.
+  useEffect(() => {
+    if (sourceMode) return;
+    if (loadedIdRef.current !== element.id) return;
+    setWysiwygHtml(markdownToSimpleHtml(markdown));
+  }, [sourceMode, element.id]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // When the project-wide catalog refreshes (e.g. leaving another module after a
   // rename), rewrite any [[Module:OldTitle]] tokens still in the open chapter.
@@ -90,27 +103,60 @@ export default function ManuscriptEditor({
       });
       return;
     }
-    if (!editor) return;
-    const html = editor.getHTML();
+    const html = readWysiwygHtml();
     const updated = apply(html);
     if (updated !== html) {
-      const { from, to } = editor.state.selection;
-      editor.commands.setContent(updated);
-      editor.commands.setTextSelection({
-        from: Math.min(from, editor.state.doc.content.size),
-        to: Math.min(to, editor.state.doc.content.size),
-      });
+      setWysiwygHtml(updated);
       setMarkdown(updated);
+      setWordCount(countWords(readWysiwygText()));
       setSaved(false);
     }
-  }, [allElements, editor, sourceMode]);
+  }, [allElements, sourceMode]);
 
   async function save() {
-    const md = sourceMode ? markdown : htmlToMarkdown(editor?.getHTML() || markdown);
+    const md = sourceMode ? markdown : htmlToMarkdown(readWysiwygHtml() || markdown);
     const res = await api.saveManuscript(element.id, md, wordGoal);
     setMarkdown(res.markdown);
     setWordCount(res.word_count);
+    if (!sourceMode) setWysiwygHtml(markdownToSimpleHtml(res.markdown));
     setSaved(true);
+  }
+
+  function toggleSource() {
+    if (!sourceMode) {
+      const md = htmlToMarkdown(readWysiwygHtml() || markdown);
+      setMarkdown(md);
+      setWordCount(countWords(md));
+      setSourceMode(true);
+      return;
+    }
+    setSourceMode(false);
+  }
+
+  function insertToken(token: string) {
+    if (sourceMode) {
+      setMarkdown((m) => m + token);
+      setWordCount((c) => c + countWords(token));
+      setSaved(false);
+      return;
+    }
+    const root = wysiwygRef.current;
+    if (!root) return;
+    root.focus();
+    const sel = window.getSelection();
+    if (sel && sel.rangeCount > 0 && root.contains(sel.anchorNode)) {
+      const range = sel.getRangeAt(0);
+      range.deleteContents();
+      range.insertNode(document.createTextNode(token));
+      range.collapse(false);
+      sel.removeAllRanges();
+      sel.addRange(range);
+    } else {
+      root.appendChild(document.createTextNode(token));
+    }
+    setMarkdown(readWysiwygHtml());
+    setWordCount(countWords(readWysiwygText()));
+    setSaved(false);
   }
 
   const suggestions = allElements
@@ -132,7 +178,7 @@ export default function ManuscriptEditor({
         <button
           className={sourceMode ? "primary" : ""}
           data-tip={TIPS.msSource}
-          onClick={() => setSourceMode((s) => !s)}
+          onClick={toggleSource}
         >
           {sourceMode ? "WYSIWYG" : "Source"}
         </button>
@@ -167,14 +213,26 @@ export default function ManuscriptEditor({
           value={markdown}
           onChange={(e) => {
             setMarkdown(e.target.value);
-            setWordCount(e.target.value.split(/\s+/).filter(Boolean).length);
+            setWordCount(countWords(e.target.value));
             setSaved(false);
           }}
         />
       ) : (
-        <div className="editor-surface">
-          <EditorContent editor={editor} />
-        </div>
+        <div
+          ref={wysiwygRef}
+          className="editor-surface manuscript-wysiwyg"
+          contentEditable
+          suppressContentEditableWarning
+          role="textbox"
+          aria-multiline="true"
+          aria-label="Manuscript body"
+          data-placeholder="Start writing your chapter…"
+          onInput={() => {
+            setMarkdown(readWysiwygHtml());
+            setWordCount(countWords(readWysiwygText()));
+            setSaved(false);
+          }}
+        />
       )}
 
       <div className="muted" style={{ fontSize: "0.9rem" }}>
@@ -185,15 +243,7 @@ export default function ManuscriptEditor({
             className="ghost"
             style={{ marginRight: 4 }}
             data-tip={TIPS.msQuickLink}
-            onClick={() => {
-              const token = `[[${capitalize(s.module_type)}:${s.title}]]`;
-              if (sourceMode) {
-                setMarkdown((m) => m + token);
-                setSaved(false);
-              } else {
-                editor?.commands.insertContent(token);
-              }
-            }}
+            onClick={() => insertToken(`[[${capitalize(s.module_type)}:${s.title}]]`)}
           >
             {s.title}
           </button>
@@ -251,11 +301,18 @@ function htmlToMarkdown(html: string): string {
     .replace(/<h2>(.*?)<\/h2>/gi, "## $1\n\n")
     .replace(/<h3>(.*?)<\/h3>/gi, "### $1\n\n")
     .replace(/<strong>(.*?)<\/strong>/gi, "**$1**")
+    .replace(/<b>(.*?)<\/b>/gi, "**$1**")
     .replace(/<em>(.*?)<\/em>/gi, "*$1*")
+    .replace(/<i>(.*?)<\/i>/gi, "*$1*")
+    .replace(/<div>/gi, "<p>")
+    .replace(/<\/div>/gi, "</p>")
     .replace(/<br\s*\/?>/gi, "\n")
     .replace(/<\/p>/gi, "\n\n")
     .replace(/<p>/gi, "")
     .replace(/<[^>]+>/g, "")
     .replace(/&nbsp;/g, " ")
+    .replace(/&amp;/g, "&")
+    .replace(/&lt;/g, "<")
+    .replace(/&gt;/g, ">")
     .trim();
 }

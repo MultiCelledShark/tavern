@@ -1,0 +1,74 @@
+{
+  "$comment": "Tavern dependency allowlist. See docs/SLIM_STACK.md. Update this file when adding deps.",
+  "rust": {
+    "allowed_direct": [
+      "anyhow",
+      "argon2",
+      "axum",
+      "axum-extra",
+      "chrono",
+      "dotenvy",
+      "hex",
+      "mime_guess",
+      "once_cell",
+      "rand",
+      "regex",
+      "rust-embed",
+      "serde",
+      "serde-json",
+      "serde_json",
+      "sha2",
+      "sqlx",
+      "thiserror",
+      "tokio",
+      "tower-http",
+      "tracing",
+      "tracing-subscriber",
+      "uuid",
+      "zip"
+    ],
+    "allowed_workspace_path": [
+      "tavern-core",
+      "tavern-db",
+      "tavern-export",
+      "tavern-import",
+      "tavern-server"
+    ],
+    "notes": {
+      "once_cell": "Phase 5 — remove with Campfire regex rewrite",
+      "regex": "Phase 5 — remove with Campfire regex rewrite",
+      "thiserror": "declared in workspace; prefer anyhow today"
+    }
+  },
+  "npm": {
+    "allowed_dependencies": [
+      "react",
+      "react-dom",
+      "react-router-dom",
+      "react-grid-layout",
+      "@xyflow/react"
+    ],
+    "allowed_devDependencies": [
+      "@types/react",
+      "@types/react-dom",
+      "@types/react-grid-layout",
+      "@vitejs/plugin-react",
+      "typescript",
+      "vite"
+    ],
+    "phase_removals": {
+      "2": ["react-grid-layout", "@types/react-grid-layout"],
+      "3": ["@xyflow/react"],
+      "4": ["react-router-dom"]
+    },
+    "banned": [
+      "@tiptap/extension-link",
+      "@tiptap/extension-placeholder",
+      "@tiptap/pm",
+      "@tiptap/react",
+      "@tiptap/starter-kit",
+      "turndown",
+      "@types/turndown"
+    ]
+  }
+}

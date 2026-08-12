@@ -825,6 +825,26 @@ label.buttonish {
 
 .ProseMirror p { margin: 0.6em 0; }
 
+.manuscript-wysiwyg {
+  outline: none;
+  min-height: 50vh;
+  width: 100%;
+  font-size: 1.05rem;
+  line-height: 1.7;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.manuscript-wysiwyg p { margin: 0.6em 0; }
+
+.manuscript-wysiwyg:empty::before,
+.manuscript-wysiwyg:has(> br:only-child)::before,
+.manuscript-wysiwyg:has(> p:only-child > br:only-child)::before {
+  content: attr(data-placeholder);
+  color: color-mix(in srgb, var(--ink) 35%, transparent);
+  pointer-events: none;
+}
+
 .corkboard-wrap {
   display: grid;
   gap: 0.75rem;
