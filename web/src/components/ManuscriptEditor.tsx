@@ -4,6 +4,7 @@ import Placeholder from "@tiptap/extension-placeholder";
 import { useEffect, useState } from "react";
 import { api, Element } from "../api/client";
 import { TIPS } from "../tips";
+import TipHint from "./TipHint";
 
 export default function ManuscriptEditor({
   element,
@@ -101,6 +102,8 @@ export default function ManuscriptEditor({
         <button className="primary" data-tip={TIPS.msSave} onClick={save}>
           {saved ? "Saved" : "Save"}
         </button>
+        <div className="spacer" />
+        <TipHint tip={TIPS.msEditor} label="Manuscript writing tips" />
       </div>
 
       {sourceMode ? (
@@ -108,7 +111,6 @@ export default function ManuscriptEditor({
           className="editor-surface"
           style={{ fontFamily: "var(--font-mono)", minHeight: "60vh" }}
           value={markdown}
-          data-tip={TIPS.msEditor}
           onChange={(e) => {
             setMarkdown(e.target.value);
             setWordCount(e.target.value.split(/\s+/).filter(Boolean).length);
@@ -116,7 +118,7 @@ export default function ManuscriptEditor({
           }}
         />
       ) : (
-        <div className="editor-surface" data-tip={TIPS.msEditor}>
+        <div className="editor-surface">
           <EditorContent editor={editor} />
         </div>
       )}

@@ -761,6 +761,37 @@ label.buttonish {
   align-items: center;
 }
 
+.manuscript-toolbar .spacer {
+  flex: 1 1 auto;
+  min-width: 0.5rem;
+}
+
+.tip-hint {
+  flex: 0 0 auto;
+  width: 1.7rem;
+  height: 1.7rem;
+  padding: 0;
+  border-radius: 999px;
+  border: 1px solid var(--border);
+  background: var(--panel);
+  color: var(--muted);
+  font-family: var(--font-display);
+  font-size: 0.95rem;
+  font-weight: 700;
+  line-height: 1;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  cursor: help;
+}
+
+.tip-hint:hover,
+.tip-hint:focus-visible {
+  color: var(--ink);
+  border-color: var(--moss);
+  background: color-mix(in srgb, var(--moss) 10%, var(--panel));
+}
+
 .editor-surface {
   background: var(--panel);
   border: 1px solid var(--border);

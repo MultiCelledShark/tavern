@@ -92,6 +92,7 @@ export default function TipHost() {
   const [coords, setCoords] = useState<{ top: number; left: number } | null>(null);
   const tipRef = useRef<HTMLDivElement | null>(null);
   const anchorRef = useRef<HTMLElement | null>(null);
+  const suppressUntilLeaveRef = useRef<HTMLElement | null>(null);
   const showTimer = useRef<number | null>(null);
   const hideTimer = useRef<number | null>(null);
   const decayTimer = useRef<number | null>(null);
@@ -121,11 +122,13 @@ export default function TipHost() {
       }
     }
 
-    function dismiss() {
+    function dismiss(opts?: { suppressAnchor?: boolean }) {
+      const suppress = opts?.suppressAnchor ? anchorRef.current : null;
       clearShow();
       clearHide();
       clearDecay();
       overTip.current = false;
+      if (suppress) suppressUntilLeaveRef.current = suppress;
       anchorRef.current = null;
       setTip(null);
       setCoords(null);
@@ -134,7 +137,7 @@ export default function TipHost() {
     function scheduleDecay() {
       clearDecay();
       decayTimer.current = window.setTimeout(() => {
-        dismiss();
+        dismiss({ suppressAnchor: true });
       }, AUTO_DISMISS_MS);
     }
 
@@ -147,12 +150,14 @@ export default function TipHost() {
     }
 
     function showFor(el: HTMLElement) {
+      if (suppressUntilLeaveRef.current === el) return;
       clearHide();
       const text = el.getAttribute("data-tip")?.trim();
       if (!text) return;
 
       const openNow = () => {
         if (!el.isConnected) return;
+        if (suppressUntilLeaveRef.current === el) return;
         anchorRef.current = el;
         setTip({
           text,
@@ -186,9 +191,17 @@ export default function TipHost() {
     }
 
     function onOut(e: MouseEvent) {
-      const el = findTipTarget(e.target);
-      if (!el || el !== anchorRef.current) return;
+      const leaving = findTipTarget(e.target);
       const related = e.relatedTarget;
+      if (
+        leaving &&
+        suppressUntilLeaveRef.current === leaving &&
+        !(related instanceof Node && leaving.contains(related))
+      ) {
+        suppressUntilLeaveRef.current = null;
+      }
+      const el = leaving;
+      if (!el || el !== anchorRef.current) return;
       if (related instanceof Node && el.contains(related)) return;
       if (related instanceof Node && tipRef.current?.contains(related)) return;
       hideSoon();
