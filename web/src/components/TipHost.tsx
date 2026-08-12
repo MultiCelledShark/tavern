@@ -86,6 +86,10 @@ function placeTip(
   return fallback;
 }
 
+function tipsDisabled(): boolean {
+  return Boolean(document.querySelector(".app-shell.focus-mode"));
+}
+
 /** Portal tooltips for `[data-tip]` — stays in viewport, not clipped by overflow. */
 export default function TipHost() {
   const [tip, setTip] = useState<TipState | null>(null);
@@ -150,6 +154,7 @@ export default function TipHost() {
     }
 
     function showFor(el: HTMLElement) {
+      if (tipsDisabled()) return;
       if (suppressUntilLeaveRef.current === el) return;
       clearHide();
       const text = el.getAttribute("data-tip")?.trim();
@@ -157,6 +162,7 @@ export default function TipHost() {
 
       const openNow = () => {
         if (!el.isConnected) return;
+        if (tipsDisabled()) return;
         if (suppressUntilLeaveRef.current === el) return;
         anchorRef.current = el;
         setTip({
@@ -180,6 +186,7 @@ export default function TipHost() {
     }
 
     function onOver(e: Event) {
+      if (tipsDisabled()) return;
       if (!finePointer.matches && e.type === "mouseover") return;
       const el = findTipTarget(e.target);
       if (!el) return;
@@ -208,6 +215,7 @@ export default function TipHost() {
     }
 
     function onFocusIn(e: FocusEvent) {
+      if (tipsDisabled()) return;
       const el = findTipTarget(e.target);
       if (el) showFor(el);
     }
@@ -221,6 +229,10 @@ export default function TipHost() {
     }
 
     function refreshAnchor() {
+      if (tipsDisabled()) {
+        dismiss();
+        return;
+      }
       const el = anchorRef.current;
       if (!el?.isConnected) {
         dismiss();
@@ -235,6 +247,17 @@ export default function TipHost() {
       if (e.key === "Escape") dismiss();
     }
 
+    function syncFocusMode() {
+      if (tipsDisabled()) dismiss();
+    }
+
+    const focusObserver = new MutationObserver(syncFocusMode);
+    focusObserver.observe(document.body, {
+      subtree: true,
+      attributes: true,
+      attributeFilter: ["class"],
+    });
+
     document.addEventListener("mouseover", onOver, true);
     document.addEventListener("mouseout", onOut, true);
     document.addEventListener("focusin", onFocusIn, true);
@@ -247,6 +270,7 @@ export default function TipHost() {
       clearShow();
       clearHide();
       clearDecay();
+      focusObserver.disconnect();
       document.removeEventListener("mouseover", onOver, true);
       document.removeEventListener("mouseout", onOut, true);
       document.removeEventListener("focusin", onFocusIn, true);

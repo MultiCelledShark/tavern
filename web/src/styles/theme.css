@@ -115,6 +115,11 @@ a { color: var(--moss-dark); }
   margin-inline: auto;
 }
 
+/* Focus mode is distraction-free — no tips or tip affordances */
+.app-shell.focus-mode .tip-hint {
+  display: none;
+}
+
 .panel-chrome-head {
   display: flex;
   align-items: center;
