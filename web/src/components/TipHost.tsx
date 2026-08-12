@@ -15,6 +15,7 @@ type TipState = {
 };
 
 const SHOW_DELAY_MS = 3000;
+const INSTANT_SHOW_DELAY_MS = 0;
 const HIDE_DELAY_MS = 180;
 const AUTO_DISMISS_MS = 3000;
 const GAP = 8;
@@ -25,6 +26,14 @@ function preferredPlacement(el: Element): Placement {
   if (el.classList.contains("tip-below")) return "bottom";
   if (el.classList.contains("tip-left")) return "left";
   return "top";
+}
+
+function tipShowDelay(el: Element): number {
+  // Explicit help icons (? in the manuscript toolbar) should feel immediate.
+  if (el.classList.contains("tip-hint") || el.hasAttribute("data-tip-instant")) {
+    return INSTANT_SHOW_DELAY_MS;
+  }
+  return SHOW_DELAY_MS;
 }
 
 function findTipTarget(start: EventTarget | null): HTMLElement | null {
@@ -194,7 +203,12 @@ export default function TipHost() {
 
       clearShow();
       pendingAnchorRef.current = el;
-      showTimer.current = window.setTimeout(openNow, SHOW_DELAY_MS);
+      const delay = tipShowDelay(el);
+      if (delay <= 0) {
+        openNow();
+      } else {
+        showTimer.current = window.setTimeout(openNow, delay);
+      }
     }
 
     function onOver(e: Event) {
