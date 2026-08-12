@@ -4,6 +4,7 @@ import "react-grid-layout/css/styles.css";
 import "react-resizable/css/styles.css";
 import { api, Element, Page, Panel } from "../api/client";
 import { TIPS } from "../tips";
+import ImageLightbox from "./ImageLightbox";
 
 const PANEL_TYPES = [
   "attributes",
@@ -478,25 +479,87 @@ function PanelEditor({
   }
 
   if (panel.panel_type === "image") {
-    const images = (content.images as ImageRef[]) || [];
-    const solo = images.length === 1;
     return (
+      <ImagePanelEditor
+        projectId={projectId}
+        content={content}
+        canEdit={canEdit}
+        onChange={onChange}
+        commit={commit}
+      />
+    );
+  }
+
+  if (panel.panel_type === "links") {
+    return (
+      <textarea
+        value={(content.element_ids as string[] | undefined)?.join("\n") || ""}
+        disabled={!canEdit}
+        data-tip={TIPS.panelLinks}
+        onChange={(e) =>
+          onChange({
+            ...content,
+            element_ids: e.target.value
+              .split("\n")
+              .map((s) => s.trim())
+              .filter(Boolean),
+          })
+        }
+        onBlur={() => void commit(content)}
+        placeholder="One element id per line"
+      />
+    );
+  }
+
+  return (
+    <textarea
+      value={JSON.stringify(content, null, 2)}
+      disabled={!canEdit}
+      onChange={(e) => {
+        try {
+          onChange(JSON.parse(e.target.value));
+        } catch {
+          /* ignore */
+        }
+      }}
+      onBlur={() => void commit(content)}
+    />
+  );
+}
+
+function ImagePanelEditor({
+  projectId,
+  content,
+  canEdit,
+  onChange,
+  commit,
+}: {
+  projectId: string;
+  content: Record<string, unknown>;
+  canEdit: boolean;
+  onChange: (c: Record<string, unknown>) => void;
+  commit: (c: Record<string, unknown>) => void | Promise<void>;
+}) {
+  const images = (content.images as ImageRef[]) || [];
+  const solo = images.length === 1;
+  const [lightbox, setLightbox] = useState<ImageRef | null>(null);
+
+  return (
+    <>
       <div className={`image-panel stack${solo ? " solo" : ""}`}>
         <div className={`image-grid${solo ? " solo" : ""}`}>
           {images.map((img, i) => {
             const caption = (img.caption || "").trim();
             return (
               <figure key={`${img.url.slice(0, 48)}-${i}`} className="image-figure">
-                <div
+                <button
+                  type="button"
                   className="image-frame"
-                  data-tip={caption || undefined}
+                  data-tip={caption || TIPS.expandImage}
+                  onClick={() => setLightbox(img)}
                 >
-                  <img
-                    src={img.url}
-                    alt={caption || "Image"}
-                    data-tip={caption || undefined}
-                  />
-                </div>
+                  <img src={img.url} alt={caption || "Image"} />
+                </button>
                 <figcaption className="image-caption">
                   {canEdit ? (
                     <>
@@ -574,42 +637,13 @@ function PanelEditor({
         )}
         {images.length === 0 && <p className="muted">No images yet.</p>}
       </div>
-    );
-  }
-
-  if (panel.panel_type === "links") {
-    return (
-      <textarea
-        value={(content.element_ids as string[] | undefined)?.join("\n") || ""}
-        disabled={!canEdit}
-        data-tip={TIPS.panelLinks}
-        onChange={(e) =>
-          onChange({
-            ...content,
-            element_ids: e.target.value
-              .split("\n")
-              .map((s) => s.trim())
-              .filter(Boolean),
-          })
-        }
-        onBlur={() => void commit(content)}
-        placeholder="One element id per line"
-      />
-    );
-  }
-
-  return (
-    <textarea
-      value={JSON.stringify(content, null, 2)}
-      disabled={!canEdit}
-      onChange={(e) => {
-        try {
-          onChange(JSON.parse(e.target.value));
-        } catch {
-          /* ignore */
-        }
-      }}
-      onBlur={() => void commit(content)}
-    />
+      {lightbox && (
+        <ImageLightbox
+          url={lightbox.url}
+          caption={lightbox.caption}
+          onClose={() => setLightbox(null)}
+        />
+      )}
+    </>
   );
 }

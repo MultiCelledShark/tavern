@@ -49,6 +49,7 @@ export const TIPS = {
   panelText: "Markdown text for this panel — saves on blur",
   panelLinks: "One linked element id per line",
   imageCaption: "Caption shown under the image and as its hover tip",
+  expandImage: "Click to view full-size",
   removeImage: "Remove this image from the panel",
   msTitle: "Chapter or scene title — saves on blur",
   msSource: "Toggle between rich editor and raw markdown source",
