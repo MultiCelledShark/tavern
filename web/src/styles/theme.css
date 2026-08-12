@@ -680,21 +680,13 @@ label.buttonish {
 .stack { display: grid; gap: 0.65rem; }
 .error { color: var(--danger); }
 
-/* Hover / focus tooltips for self-guided UI */
-[data-tip] {
-  position: relative;
-}
-
-[data-tip]::after {
-  content: attr(data-tip);
-  position: absolute;
-  left: 50%;
-  bottom: calc(100% + 0.45rem);
-  transform: translateX(-50%) translateY(0.15rem);
-  z-index: 40;
+/* Hover / focus tooltips — rendered by TipHost portal (not clipped by overflow) */
+.tavern-tip {
+  position: fixed;
+  z-index: 10000;
   width: max-content;
-  max-width: min(16rem, 70vw);
-  padding: 0.4rem 0.55rem;
+  max-width: min(18rem, calc(100vw - 1.25rem));
+  padding: 0.45rem 0.6rem;
   border-radius: 6px;
   background: var(--ink);
   color: var(--stone);
@@ -705,39 +697,8 @@ label.buttonish {
   line-height: 1.35;
   text-align: left;
   white-space: normal;
-  opacity: 0;
-  pointer-events: none;
-  transition: opacity 0.12s ease, transform 0.12s ease;
+  pointer-events: auto;
   box-shadow: 0 8px 20px rgba(28, 36, 33, 0.18);
-}
-
-[data-tip]:hover::after,
-[data-tip]:focus-visible::after {
-  opacity: 1;
-  transform: translateX(-50%) translateY(0);
-}
-
-[data-tip].tip-below::after {
-  bottom: auto;
-  top: calc(100% + 0.45rem);
-  transform: translateX(-50%) translateY(-0.15rem);
-}
-
-[data-tip].tip-below:hover::after,
-[data-tip].tip-below:focus-visible::after {
-  transform: translateX(-50%) translateY(0);
-}
-
-[data-tip].tip-right::after {
-  left: calc(100% + 0.45rem);
-  bottom: auto;
-  top: 50%;
-  transform: translate(0.15rem, -50%);
-}
-
-[data-tip].tip-right:hover::after,
-[data-tip].tip-right:focus-visible::after {
-  transform: translate(0, -50%);
 }
 
 .module-rail {
@@ -907,16 +868,5 @@ label.buttonish {
   .manuscript-toolbar input {
     max-width: none !important;
     width: 100%;
-  }
-}
-
-/* Prefer hover tips on fine pointers; avoid sticky fake tooltips on touch */
-@media (hover: none) {
-  [data-tip]:hover::after {
-    opacity: 0;
-  }
-
-  [data-tip]:focus-visible::after {
-    opacity: 1;
   }
 }
