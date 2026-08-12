@@ -794,10 +794,13 @@ label.buttonish {
 }
 
 .manuscript-layout {
-  display: grid;
-  grid-template-rows: auto 1fr;
-  height: calc(100% - 0.5rem);
+  display: flex;
+  flex-direction: column;
   gap: 0.75rem;
+  min-height: 0;
+  /* Do not force a full-canvas 1fr row — that left a large empty band
+     above the editor surface once TipTap's inner wrapper was removed. */
+  height: auto;
 }
 
 .manuscript-toolbar {
@@ -807,6 +810,7 @@ label.buttonish {
   align-items: center;
   position: relative;
   padding-right: 2.25rem;
+  flex: 0 0 auto;
 }
 
 .manuscript-toolbar .tip-hint {
@@ -850,6 +854,7 @@ label.buttonish {
   padding: 1.25rem 1.5rem;
   width: 100%;
   box-sizing: border-box;
+  flex: 1 1 auto;
 }
 
 .ProseMirror {
@@ -863,8 +868,9 @@ label.buttonish {
 .ProseMirror p { margin: 0.6em 0; }
 
 .manuscript-wysiwyg {
+  position: relative;
   outline: none;
-  min-height: 50vh;
+  min-height: 60vh;
   width: 100%;
   font-size: 1.05rem;
   line-height: 1.7;
@@ -878,6 +884,10 @@ label.buttonish {
 .manuscript-wysiwyg:has(> br:only-child)::before,
 .manuscript-wysiwyg:has(> p:only-child > br:only-child)::before {
   content: attr(data-placeholder);
+  position: absolute;
+  top: 1.25rem;
+  left: 1.5rem;
+  right: 1.5rem;
   color: color-mix(in srgb, var(--ink) 35%, transparent);
   pointer-events: none;
 }
