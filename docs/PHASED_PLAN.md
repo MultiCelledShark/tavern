@@ -32,5 +32,6 @@
 - [x] Slim stack Phase 2 (PanelGrid replaces react-grid-layout) — [SLIM_STACK.md](./SLIM_STACK.md)
 - [x] Slim stack Phase 3 (bespoke relationship graph + corkboard drag perf) — [SLIM_STACK.md](./SLIM_STACK.md)
 - [x] Slim stack Phase 4 (bespoke router, react-router removed) — [SLIM_STACK.md](./SLIM_STACK.md)
-- [ ] Slim stack Phase 5+ (Rust import diet, hardening) — [SLIM_STACK.md](./SLIM_STACK.md)
+- [x] Slim stack Phase 5 (Campfire HTML without regex/once_cell) — [SLIM_STACK.md](./SLIM_STACK.md)
+- [ ] Slim stack Phase 6 (hardening / deny cadence) — [SLIM_STACK.md](./SLIM_STACK.md)
 - [ ] **Albion / Debian nginx cutover** — planned in [DEBIAN_CUTOVER.md](DEBIAN_CUTOVER.md); not executed yet. Keep the watch list there updated when deploy surface changes. Private host details → gitignored `docs/homelab.md` (see `homelab.md.example`).

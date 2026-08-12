@@ -34,7 +34,7 @@ Related: [PHASED_PLAN.md](./PHASED_PLAN.md).
 | `dotenvy` | config |
 | `mime_guess` | asset content-types |
 
-**Try to delete later:** `regex`, `once_cell` (Campfire HTML), unused direct crates (`cookie`, `tower`, `tempfile` if unused).
+**Try to delete later:** unused direct crates if any creep back; defer `sqlx` → `rusqlite` unless size forces it.
 
 **Hard deny:** extra web frameworks, alternate ORMs, drive-by utility crates, anything not on this list without an allowlist update.
 
@@ -104,7 +104,10 @@ Replace `react-router-dom` with a tiny history API helper (`web/src/lib/router.t
 
 ### Phase 5 — Rust import diet
 
-Replace `regex` / `once_cell` in Campfire parsing; drop confirmed-unused server crates. Defer `sqlx` → `rusqlite` unless there is a strong size reason.
+Replace `regex` / `once_cell` in Campfire parsing with hand-rolled `html_scan` helpers; drop unused workspace `thiserror`. Defer `sqlx` → `rusqlite` unless there is a strong size reason.
+
+**Touch:** `crates/tavern-import` (`campfire_html.rs`, `html_scan.rs`), allowlist, workspace `Cargo.toml`  
+**Exit:** Campfire sample fixture still parses; no direct `regex` / `once_cell` deps.
 
 ### Phase 6 — Hardening (ongoing)
 
@@ -119,14 +122,14 @@ Vendoring/mirroring if needed; Renovate only for allowlisted packages; periodic 
 
 ## Baseline counts
 
-Captured during Phases 0–4 (re-run `scripts/check-dependency-allowlist.sh` for live numbers):
+Captured during Phases 0–5 (re-run `scripts/check-dependency-allowlist.sh` for live numbers):
 
-| Layer | Before | After Phase 4 |
+| Layer | Before | After Phase 5 |
 |---|---|---|
 | Web runtime direct | 11 | **2** (`react`, `react-dom`) |
 | Web lockfile packages | ~223 | **~71 audited** |
-| Rust direct external | ~26 | ~23 |
-| Rust transitive | ~250 | ~250 |
+| Rust direct external | ~26 | **~21** (dropped regex, once_cell, thiserror) |
+| Rust transitive | ~250 | lower (no regex/once_cell tree) |
 
 ## Status
 
@@ -137,4 +140,5 @@ Captured during Phases 0–4 (re-run `scripts/check-dependency-allowlist.sh` for
 | 2 grid-layout → PanelGrid | done |
 | 3 XYFlow → bespoke graph | done |
 | 4 react-router → bespoke router | done |
-| 5–6 | not started |
+| 5 Rust import diet (no regex/once_cell) | done |
+| 6 Hardening | not started |

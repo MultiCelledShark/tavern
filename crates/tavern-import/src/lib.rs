@@ -17,6 +17,7 @@ use tavern_core::{
 };
 
 mod campfire_html;
+mod html_scan;
 
 #[derive(Debug, Clone)]
 pub struct ImportReport {

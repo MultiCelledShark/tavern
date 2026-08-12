@@ -1,63 +1,17 @@
 //! Parse Campfire "Export Server" HTML dumps (`Campfire_Export.html`).
 
 use anyhow::Result;
-use once_cell::sync::Lazy;
-use regex::Regex;
 use std::collections::HashMap;
 use tavern_core::{
     IntermediateElement, IntermediateLink, IntermediatePanel, IntermediateProject,
 };
 
+use crate::html_scan::{
+    after_marker_until, after_marker_until_all, attr_quoted, between, class_attr, collapse_ws,
+    extract_sections, find_ci, html_unescape, remove_blocks_ci, remove_marked_element,
+    replace_ci, replace_open_tag_ci, rewrite_wrapped_ci, strip_tags,
+};
 use crate::ImportReport;
-
-static RE_TITLE: Lazy<Regex> =
-    Lazy::new(|| Regex::new(r#"(?s)<h2 class="item-title">(.*?)</h2>"#).unwrap());
-static RE_SUBTITLE: Lazy<Regex> =
-    Lazy::new(|| Regex::new(r#"(?s)class="item-subtitle"[^>]*>(.*?)</"#).unwrap());
-static RE_PAGE_TITLE: Lazy<Regex> =
-    Lazy::new(|| Regex::new(r#"(?s)<h3 class="page-title">(.*?)</h3>"#).unwrap());
-static RE_PANEL_HEADER: Lazy<Regex> =
-    Lazy::new(|| Regex::new(r#"(?s)<h4 class="panel-header">(.*?)</h4>"#).unwrap());
-static RE_ATTR_ROW: Lazy<Regex> = Lazy::new(|| {
-    Regex::new(
-        r#"(?s)<div class="attribute-row"><dt class="attribute-label">(.*?)</dt><dd class="attribute-value">(.*?)</dd></div>"#,
-    )
-    .unwrap()
-});
-static RE_MS: Lazy<Regex> = Lazy::new(|| {
-    Regex::new(r#"(?s)<div class="manuscript-content"[^>]*>(.*?)</div>\s*<div class="manuscript-notes"#).unwrap()
-});
-static RE_MS_FALLBACK: Lazy<Regex> =
-    Lazy::new(|| Regex::new(r#"(?s)class="manuscript-content"[^>]*>(.*?)</div>"#).unwrap());
-static RE_LINK_NAME: Lazy<Regex> =
-    Lazy::new(|| Regex::new(r#"(?s)class="link-name"[^>]*>(.*?)</"#).unwrap());
-static RE_LIST_ITEM: Lazy<Regex> = Lazy::new(|| {
-    Regex::new(
-        r#"(?s)class="list-item-title"[^>]*>(.*?)</h6>.*?class="list-item-description"[^>]*>(.*?)</div>"#,
-    )
-    .unwrap()
-});
-static RE_SECTION_OPEN: Lazy<Regex> =
-    Lazy::new(|| Regex::new(r"(?i)<section\b[^>]*>").unwrap());
-static RE_SECTION_CLOSE: Lazy<Regex> = Lazy::new(|| Regex::new(r"(?i)</section>").unwrap());
-static RE_CLASS: Lazy<Regex> =
-    Lazy::new(|| Regex::new(r#"class="([^"]*)""#).unwrap());
-static RE_IMG: Lazy<Regex> = Lazy::new(|| {
-    Regex::new(r#"(?is)<img[^>]+src="([^"]+)"[^>]*(?:alt="([^"]*)")?[^>]*>"#).unwrap()
-});
-static RE_TABLE_ROW: Lazy<Regex> =
-    Lazy::new(|| Regex::new(r"(?is)<tr[^>]*>(.*?)</tr>").unwrap());
-static RE_TABLE_CELL: Lazy<Regex> =
-    Lazy::new(|| Regex::new(r"(?is)<t[hd][^>]*>(.*?)</t[hd]>").unwrap());
-static RE_STAT_ITEM: Lazy<Regex> = Lazy::new(|| {
-    Regex::new(
-        r#"(?s)class="stat-name"[^>]*>(.*?)</span>\s*<span class="stat-value"[^>]*>(.*?)</span>"#,
-    )
-    .unwrap()
-});
-static RE_EXPORT_ITEM: Lazy<Regex> = Lazy::new(|| {
-    Regex::new(r#"(?is)<section class="export-item([^"]*)"[^>]*>"#).unwrap()
-});
 
 pub fn looks_like_campfire_html(bytes: &[u8]) -> bool {
     let head = String::from_utf8_lossy(&bytes[..bytes.len().min(4000)]);
@@ -81,17 +35,13 @@ pub fn load_campfire_html(
 
     for (item_tag, chunk) in split_export_items(&html) {
         let title = html_to_text(
-            &RE_TITLE
-                .captures(chunk)
-                .and_then(|c| c.get(1).map(|m| m.as_str().to_string()))
-                .unwrap_or_else(|| "Untitled".into()),
+            between(chunk, r#"<h2 class="item-title">"#, "</h2>").unwrap_or("Untitled"),
         );
-        let subtitle = RE_SUBTITLE
-            .captures(chunk)
-            .map(|c| html_to_text(c.get(1).map(|m| m.as_str()).unwrap_or("")))
+        let subtitle = after_marker_until(chunk, r#"class="item-subtitle""#, "</")
+            .map(html_to_text)
             .filter(|s| !s.is_empty());
 
-        let (module_type, unsup) = classify_item(chunk, &title, subtitle.as_deref(), &item_tag);
+        let (module_type, unsup) = classify_item(chunk, &title, subtitle.as_deref(), item_tag);
         *module_counts.entry(module_type.clone()).or_default() += 1;
         if let Some(ref u) = unsup {
             unsupported.push(u.clone());
@@ -120,20 +70,15 @@ pub fn load_campfire_html(
             body_markdown = Some(extract_manuscript(chunk));
         } else {
             for (_tag, page_html) in extract_sections(chunk, "page-section") {
-                let page_title = RE_PAGE_TITLE
-                    .captures(page_html)
-                    .map(|c| html_to_text(c.get(1).map(|m| m.as_str()).unwrap_or("")))
+                let page_title = between(page_html, r#"<h3 class="page-title">"#, "</h3>")
+                    .map(html_to_text)
                     .unwrap_or_else(|| "Page".into());
 
                 let mut page_had_panel = false;
                 for (panel_tag, panel_html) in extract_sections(page_html, "panel-section") {
-                    let panel_class = RE_CLASS
-                        .captures(panel_tag)
-                        .and_then(|c| c.get(1).map(|m| m.as_str().to_string()))
-                        .unwrap_or_default();
-                    let panel_title = RE_PANEL_HEADER
-                        .captures(panel_html)
-                        .map(|c| html_to_text(c.get(1).map(|m| m.as_str()).unwrap_or("")))
+                    let panel_class = class_attr(panel_tag).unwrap_or_default().to_string();
+                    let panel_title = between(panel_html, r#"<h4 class="panel-header">"#, "</h4>")
+                        .map(html_to_text)
                         .unwrap_or_else(|| page_title.clone());
 
                     if let Some(mut p) =
@@ -287,11 +232,13 @@ fn classify_item(
         }
     }
 
-    if let Some(caps) = RE_EXPORT_ITEM.captures(item_tag) {
-        let extra = caps.get(1).map(|m| m.as_str()).unwrap_or("");
-        for token in extra.split_whitespace() {
-            if let Some(mt) = campfire_module_from_label(token) {
-                return (mt.into(), None);
+    if let Some(class) = class_attr(item_tag) {
+        // `<section class="export-item character foo">` → tokens after export-item
+        if let Some(rest) = class.strip_prefix("export-item") {
+            for token in rest.split_whitespace() {
+                if let Some(mt) = campfire_module_from_label(token) {
+                    return (mt.into(), None);
+                }
             }
         }
     }
@@ -324,19 +271,124 @@ fn is_research(chunk: &str) -> bool {
 }
 
 fn extract_timeline_date(chunk: &str) -> Option<String> {
-    for row in RE_ATTR_ROW.captures_iter(chunk) {
-        let key = html_to_text(row.get(1).map(|m| m.as_str()).unwrap_or(""));
+    for (key, value) in iter_attr_rows(chunk) {
         if key.eq_ignore_ascii_case("date")
             || key.eq_ignore_ascii_case("when")
             || key.eq_ignore_ascii_case("year")
         {
-            let value = html_to_text(row.get(2).map(|m| m.as_str()).unwrap_or(""));
             if !value.is_empty() {
                 return Some(value);
             }
         }
     }
     None
+}
+
+fn iter_attr_rows(html: &str) -> Vec<(String, String)> {
+    let mut out = Vec::new();
+    let mut pos = 0;
+    let open = r#"<div class="attribute-row">"#;
+    while let Some(rel) = html[pos..].find(open) {
+        let abs = pos + rel + open.len();
+        let Some(key) = between(&html[abs..], r#"<dt class="attribute-label">"#, "</dt>") else {
+            pos = abs;
+            continue;
+        };
+        let after_key = abs
+            + html[abs..]
+                .find("</dt>")
+                .map(|i| i + "</dt>".len())
+                .unwrap_or(0);
+        let Some(value) = between(&html[after_key..], r#"<dd class="attribute-value">"#, "</dd>")
+        else {
+            pos = after_key;
+            continue;
+        };
+        out.push((html_to_text(key), html_to_text(value)));
+        pos = after_key
+            + html[after_key..]
+                .find("</dd>")
+                .map(|i| i + "</dd>".len())
+                .unwrap_or(1);
+    }
+    out
+}
+
+fn iter_list_items(html: &str) -> Vec<(String, String)> {
+    let mut out = Vec::new();
+    let mut pos = 0;
+    while let Some(rel) = html.get(pos..).and_then(|s| s.find(r#"class="list-item-title""#)) {
+        let abs = pos + rel;
+        let Some(title) = after_marker_until(&html[abs..], r#"class="list-item-title""#, "</h6>")
+        else {
+            pos = abs + 1;
+            continue;
+        };
+        let after_title = abs
+            + html[abs..]
+                .find("</h6>")
+                .map(|i| i + "</h6>".len())
+                .unwrap_or(1);
+        let desc = after_marker_until(
+            &html[after_title..],
+            r#"class="list-item-description""#,
+            "</div>",
+        )
+        .unwrap_or("");
+        out.push((html_to_text(title), html_to_text(desc)));
+        pos = html[after_title..]
+            .find(r#"class="list-item-description""#)
+            .and_then(|i| {
+                let s = after_title + i;
+                html[s..].find("</div>").map(|j| s + j + "</div>".len())
+            })
+            .unwrap_or(after_title + 1);
+    }
+    out
+}
+
+fn iter_stat_items(html: &str) -> Vec<(String, String)> {
+    let mut out = Vec::new();
+    let mut pos = 0;
+    while let Some(rel) = html.get(pos..).and_then(|s| s.find(r#"class="stat-name""#)) {
+        let abs = pos + rel;
+        let Some(name) = after_marker_until(&html[abs..], r#"class="stat-name""#, "</span>") else {
+            pos = abs + 1;
+            continue;
+        };
+        let after_name = abs
+            + html[abs..]
+                .find("</span>")
+                .map(|i| i + "</span>".len())
+                .unwrap_or(1);
+        let value =
+            after_marker_until(&html[after_name..], r#"class="stat-value""#, "</span>").unwrap_or("");
+        out.push((html_to_text(name), html_to_text(value)));
+        pos = html[after_name..]
+            .find(r#"class="stat-value""#)
+            .and_then(|i| {
+                let s = after_name + i;
+                html[s..].find("</span>").map(|j| s + j + "</span>".len())
+            })
+            .unwrap_or(after_name + 1);
+    }
+    out
+}
+
+fn iter_link_names(html: &str) -> Vec<String> {
+    after_marker_until_all(html, r#"class="link-name""#, "</")
+        .into_iter()
+        .map(html_to_text)
+        .filter(|s| !s.is_empty())
+        .collect()
+}
+
+fn iter_tag_badges(html: &str) -> Vec<String> {
+    after_marker_until_all(html, r#"class="tag-badge""#, "</")
+        .into_iter()
+        .map(html_to_text)
+        .filter(|s| !s.is_empty())
+        .collect()
 }
 
 fn is_character(chunk: &str) -> bool {
@@ -390,47 +442,6 @@ fn is_location(chunk: &str) -> bool {
         || (chunk.contains(">History</h4>") && chunk.contains("attributes-list"))
 }
 
-/// Extract `<section class="…needle…">…</section>` bodies with nest-aware matching.
-fn extract_sections<'a>(html: &'a str, needle: &str) -> Vec<(&'a str, &'a str)> {
-    let mut out = Vec::new();
-    let mut pos = 0;
-    while let Some(m) = RE_SECTION_OPEN.find_at(html, pos) {
-        let tag = m.as_str();
-        if !tag.contains(needle) {
-            pos = m.end();
-            continue;
-        }
-        let mut depth = 1usize;
-        let mut cursor = m.end();
-        let content_start = m.end();
-        while depth > 0 {
-            let next_open = RE_SECTION_OPEN.find_at(html, cursor);
-            let next_close = RE_SECTION_CLOSE.find_at(html, cursor);
-            match (next_open, next_close) {
-                (_, None) => {
-                    cursor = html.len();
-                    break;
-                }
-                (Some(o), Some(c)) if o.start() < c.start() => {
-                    depth += 1;
-                    cursor = o.end();
-                }
-                (_, Some(c)) => {
-                    depth -= 1;
-                    if depth == 0 {
-                        out.push((tag, &html[content_start..c.start()]));
-                        cursor = c.end();
-                        break;
-                    }
-                    cursor = c.end();
-                }
-            }
-        }
-        pos = cursor;
-    }
-    out
-}
-
 fn looks_like_timeline(title: &str, _chunk: &str) -> bool {
     let t = title.to_ascii_lowercase();
     // Event-style titles from Campfire Timeline modules. Avoid nouns like
@@ -473,9 +484,7 @@ fn map_panel(
     let class = panel_class.to_ascii_lowercase();
     if class.contains("panel-custom") || panel_html.contains("attributes-list") {
         let mut items = Vec::new();
-        for row in RE_ATTR_ROW.captures_iter(panel_html) {
-            let key = html_to_text(row.get(1).map(|m| m.as_str()).unwrap_or(""));
-            let value = html_to_text(row.get(2).map(|m| m.as_str()).unwrap_or(""));
+        for (key, value) in iter_attr_rows(panel_html) {
             if !key.is_empty() {
                 items.push(serde_json::json!({ "key": key, "value": value }));
             }
@@ -490,9 +499,7 @@ fn map_panel(
     }
     if class.contains("panel-list") || class.contains("list-panel") {
         let mut items = Vec::new();
-        for row in RE_LIST_ITEM.captures_iter(panel_html) {
-            let title = html_to_text(row.get(1).map(|m| m.as_str()).unwrap_or(""));
-            let desc = html_to_text(row.get(2).map(|m| m.as_str()).unwrap_or(""));
+        for (title, desc) in iter_list_items(panel_html) {
             let line = if title.is_empty() {
                 desc
             } else if desc.is_empty() {
@@ -505,15 +512,7 @@ fn map_panel(
             }
         }
         if items.is_empty() {
-            for tag in Regex::new(r#"(?s)class="tag-badge"[^>]*>(.*?)</"#)
-                .unwrap()
-                .captures_iter(panel_html)
-            {
-                let t = html_to_text(tag.get(1).map(|m| m.as_str()).unwrap_or(""));
-                if !t.is_empty() {
-                    items.push(t);
-                }
-            }
+            items.extend(iter_tag_badges(panel_html));
         }
         return Some(IntermediatePanel {
             panel_type: "list".into(),
@@ -545,16 +544,13 @@ fn map_panel(
         });
     }
     if class.contains("link") || panel_title.eq_ignore_ascii_case("Links") {
-        for name in RE_LINK_NAME.captures_iter(panel_html) {
-            let to = html_to_text(name.get(1).map(|m| m.as_str()).unwrap_or(""));
-            if !to.is_empty() {
-                links.push(IntermediateLink {
-                    from_title: from_title.into(),
-                    to_title: to,
-                    label: "linked".into(),
-                    link_type: "related".into(),
-                });
-            }
+        for to in iter_link_names(panel_html) {
+            links.push(IntermediateLink {
+                from_title: from_title.into(),
+                to_title: to,
+                label: "linked".into(),
+                link_type: "related".into(),
+            });
         }
         return Some(IntermediatePanel {
             panel_type: "links".into(),
@@ -567,17 +563,13 @@ fn map_panel(
     if class.contains("stat") || panel_html.contains("stats-panel") || panel_html.contains("stat-item")
     {
         let mut items = Vec::new();
-        for row in RE_STAT_ITEM.captures_iter(panel_html) {
-            let key = html_to_text(row.get(1).map(|m| m.as_str()).unwrap_or(""));
-            let value = html_to_text(row.get(2).map(|m| m.as_str()).unwrap_or(""));
+        for (key, value) in iter_stat_items(panel_html) {
             if !key.is_empty() || !value.is_empty() {
                 items.push(serde_json::json!({ "key": key, "value": value }));
             }
         }
         if items.is_empty() {
-            for row in RE_ATTR_ROW.captures_iter(panel_html) {
-                let key = html_to_text(row.get(1).map(|m| m.as_str()).unwrap_or(""));
-                let value = html_to_text(row.get(2).map(|m| m.as_str()).unwrap_or(""));
+            for (key, value) in iter_attr_rows(panel_html) {
                 if !key.is_empty() {
                     items.push(serde_json::json!({ "key": key, "value": value }));
                 }
@@ -594,11 +586,10 @@ fn map_panel(
         }
     }
     if class.contains("research") || panel_html.contains("research-panel") {
-        let md = if let Some(caps) = Regex::new(r#"(?s)class="research-text-content"[^>]*>(.*?)</div>"#)
-            .ok()
-            .and_then(|re| re.captures(panel_html))
+        let md = if let Some(inner) =
+            after_marker_until(panel_html, r#"class="research-text-content""#, "</div>")
         {
-            html_to_markdown(caps.get(1).map(|m| m.as_str()).unwrap_or(""))
+            html_to_markdown(inner)
         } else {
             html_to_markdown(panel_html)
         };
@@ -627,16 +618,59 @@ fn map_panel(
 }
 
 fn extract_table(html: &str) -> Option<serde_json::Value> {
-    let rows: Vec<Vec<String>> = RE_TABLE_ROW
-        .captures_iter(html)
-        .map(|row| {
-            RE_TABLE_CELL
-                .captures_iter(row.get(1).map(|m| m.as_str()).unwrap_or(""))
-                .map(|cell| html_to_text(cell.get(1).map(|m| m.as_str()).unwrap_or("")))
-                .collect()
-        })
-        .filter(|r: &Vec<String>| !r.is_empty())
-        .collect();
+    let mut rows = Vec::new();
+    let mut pos = 0;
+    while let Some(rel) = find_ci(&html[pos..], "<tr") {
+        let abs = pos + rel;
+        let Some(gt) = html[abs..].find('>') else {
+            break;
+        };
+        let inner_start = abs + gt + 1;
+        let Some(close_rel) = find_ci(&html[inner_start..], "</tr>") else {
+            break;
+        };
+        let row_html = &html[inner_start..inner_start + close_rel];
+        let mut cells = Vec::new();
+        let mut cell_pos = 0;
+        loop {
+            let td = find_ci(&row_html[cell_pos..], "<td").map(|i| (i, false));
+            let th = find_ci(&row_html[cell_pos..], "<th").map(|i| (i, true));
+            let next = match (td, th) {
+                (Some((a, _)), Some((b, _))) if a <= b => td,
+                (Some(_), Some(_)) => th,
+                (Some(_), None) => td,
+                (None, Some(_)) => th,
+                (None, None) => None,
+            };
+            let Some((rel, is_th)) = next else {
+                break;
+            };
+            let cell_abs = cell_pos + rel;
+            let after_open = cell_abs + 3; // "<td" / "<th"
+            // name-bound: next char must be tag boundary
+            if after_open < row_html.len() {
+                let c = row_html.as_bytes()[after_open];
+                if c != b'>' && c != b'/' && !c.is_ascii_whitespace() {
+                    cell_pos = after_open;
+                    continue;
+                }
+            }
+            let Some(gt) = row_html[cell_abs..].find('>') else {
+                break;
+            };
+            let content_start = cell_abs + gt + 1;
+            let close = if is_th { "</th>" } else { "</td>" };
+            let Some(cend) = find_ci(&row_html[content_start..], close) else {
+                break;
+            };
+            cells.push(html_to_text(&row_html[content_start..content_start + cend]));
+            cell_pos = content_start + cend + close.len();
+        }
+        if !cells.is_empty() {
+            rows.push(cells);
+        }
+        pos = inner_start + close_rel + "</tr>".len();
+    }
     if rows.is_empty() {
         return None;
     }
@@ -650,52 +684,69 @@ fn extract_table(html: &str) -> Option<serde_json::Value> {
 }
 
 fn extract_images(html: &str) -> Vec<serde_json::Value> {
-    let fig_caption = Regex::new(
-        r#"(?is)<(?:div|figcaption)[^>]*class="[^"]*image-caption[^"]*"[^>]*>(.*?)</(?:div|figcaption)>"#,
-    )
-    .ok();
-    RE_IMG
-        .captures_iter(html)
-        .filter_map(|cap| {
-            let url = cap.get(1).map(|m| m.as_str()).unwrap_or("").trim();
-            if url.is_empty() {
-                return None;
+    let mut out = Vec::new();
+    let mut pos = 0;
+    while let Some(rel) = find_ci(&html[pos..], "<img") {
+        let abs = pos + rel;
+        // name-bound: <img not <important
+        let after = abs + 4;
+        if after < html.len() {
+            let c = html.as_bytes()[after];
+            if c != b'>' && c != b'/' && !c.is_ascii_whitespace() {
+                pos = after;
+                continue;
             }
-            let mut caption = cap
-                .get(2)
-                .map(|m| html_to_text(m.as_str()))
-                .filter(|s| !s.is_empty());
-            if caption.is_none() {
-                if let Some(re) = &fig_caption {
-                    if let Some(c) = re.captures(html) {
-                        let t = html_to_text(c.get(1).map(|m| m.as_str()).unwrap_or(""));
-                        if !t.is_empty() {
-                            caption = Some(t);
-                        }
-                    }
+        }
+        let Some(gt) = html[abs..].find('>') else {
+            break;
+        };
+        let tag = &html[abs..abs + gt + 1];
+        let url = attr_quoted(tag, "src").unwrap_or("").trim();
+        if url.is_empty() {
+            pos = abs + gt + 1;
+            continue;
+        }
+        let mut caption = attr_quoted(tag, "alt")
+            .map(html_to_text)
+            .filter(|s| !s.is_empty());
+        if caption.is_none() {
+            if let Some(cap) = after_marker_until(html, r#"class="image-caption""#, "</") {
+                let t = html_to_text(cap);
+                if !t.is_empty() {
+                    caption = Some(t);
                 }
             }
-            Some(if let Some(c) = caption {
-                serde_json::json!({ "url": url, "caption": c })
-            } else {
-                serde_json::json!({ "url": url })
-            })
-        })
-        .collect()
+        }
+        out.push(if let Some(c) = caption {
+            serde_json::json!({ "url": url, "caption": c })
+        } else {
+            serde_json::json!({ "url": url })
+        });
+        pos = abs + gt + 1;
+    }
+    out
 }
 
 fn extract_manuscript(chunk: &str) -> String {
-    if let Some(c) = RE_MS.captures(chunk) {
-        return html_to_markdown(c.get(1).map(|m| m.as_str()).unwrap_or(""));
-    }
-    if let Some(c) = RE_MS_FALLBACK.captures(chunk) {
-        return html_to_markdown(c.get(1).map(|m| m.as_str()).unwrap_or(""));
+    if let Some(marker) = chunk.find(r#"class="manuscript-content""#) {
+        let after_marker = &chunk[marker..];
+        if let Some(gt) = after_marker.find('>') {
+            let content_start = marker + gt + 1;
+            if let Some(notes_rel) = chunk[content_start..].find(r#"class="manuscript-notes""#) {
+                let before_notes = &chunk[content_start..content_start + notes_rel];
+                if let Some(end) = before_notes.rfind("</div>") {
+                    return html_to_markdown(&before_notes[..end]);
+                }
+            }
+            if let Some(end) = chunk[content_start..].find("</div>") {
+                return html_to_markdown(&chunk[content_start..content_start + end]);
+            }
+        }
     }
     let mut md = String::new();
     for (_tag, page_html) in extract_sections(chunk, "page-section") {
-        let t = RE_PAGE_TITLE
-            .captures(page_html)
-            .map(|c| html_to_text(c.get(1).map(|m| m.as_str()).unwrap_or("")))
+        let t = between(page_html, r#"<h3 class="page-title">"#, "</h3>")
+            .map(html_to_text)
             .unwrap_or_default();
         let body = html_to_markdown(page_html);
         if !body.trim().is_empty() {
@@ -740,82 +791,53 @@ fn dedupe_links(links: Vec<IntermediateLink>) -> Vec<IntermediateLink> {
 
 fn html_to_text(s: &str) -> String {
     let mut out = s.to_string();
-    out = Regex::new(r"(?is)<script[^>]*>.*?</script>")
-        .unwrap()
-        .replace_all(&out, "")
-        .into_owned();
-    out = Regex::new(r"(?is)<style[^>]*>.*?</style>")
-        .unwrap()
-        .replace_all(&out, "")
-        .into_owned();
-    out = Regex::new(r"(?i)<br\s*/?>")
-        .unwrap()
-        .replace_all(&out, "\n")
-        .into_owned();
-    out = Regex::new(r"(?i)</p>")
-        .unwrap()
-        .replace_all(&out, "\n")
-        .into_owned();
-    out = Regex::new(r"<[^>]+>").unwrap().replace_all(&out, " ").into_owned();
-    out = html_unescape(&out);
-    collapse_ws(&out)
+    out = remove_blocks_ci(out, "<script", "</script>");
+    out = remove_blocks_ci(out, "<style", "</style>");
+    out = replace_ci(out, "<br>", "\n");
+    out = replace_ci(out, "<br/>", "\n");
+    out = replace_ci(out, "<br />", "\n");
+    out = replace_ci(out, "</p>", "\n");
+    out = replace_ci(out, "</P>", "\n");
+    // strip remaining tags → spaces (matches prior regex behavior)
+    let stripped = {
+        let mut buf = String::with_capacity(out.len());
+        let mut in_tag = false;
+        for ch in out.chars() {
+            match ch {
+                '<' => {
+                    in_tag = true;
+                    buf.push(' ');
+                }
+                '>' => in_tag = false,
+                _ if !in_tag => buf.push(ch),
+                _ => {}
+            }
+        }
+        buf
+    };
+    collapse_ws(&html_unescape(&stripped))
 }
 
 fn html_to_markdown(s: &str) -> String {
     let mut out = s.to_string();
-    out = Regex::new(r"(?is)<script[^>]*>.*?</script>")
-        .unwrap()
-        .replace_all(&out, "")
-        .into_owned();
-    out = Regex::new(r"(?is)<style[^>]*>.*?</style>")
-        .unwrap()
-        .replace_all(&out, "")
-        .into_owned();
-    out = Regex::new(r#"(?is)<h4 class="panel-header">.*?</h4>"#)
-        .unwrap()
-        .replace_all(&out, "")
-        .into_owned();
-    out = Regex::new(r#"(?is)<header class="page-header">.*?</header>"#)
-        .unwrap()
-        .replace_all(&out, "")
-        .into_owned();
-    out = Regex::new(r"(?i)<br\s*/?>")
-        .unwrap()
-        .replace_all(&out, "\n")
-        .into_owned();
-    out = Regex::new(r"(?i)</p\s*>")
-        .unwrap()
-        .replace_all(&out, "\n\n")
-        .into_owned();
-    out = Regex::new(r"(?i)<p[^>]*>")
-        .unwrap()
-        .replace_all(&out, "")
-        .into_owned();
-    out = Regex::new(r"(?i)<strong[^>]*>(.*?)</strong>")
-        .unwrap()
-        .replace_all(&out, "**$1**")
-        .into_owned();
-    out = Regex::new(r"(?i)<b[^>]*>(.*?)</b>")
-        .unwrap()
-        .replace_all(&out, "**$1**")
-        .into_owned();
-    out = Regex::new(r"(?i)<em[^>]*>(.*?)</em>")
-        .unwrap()
-        .replace_all(&out, "*$1*")
-        .into_owned();
-    out = Regex::new(r"(?i)<i[^>]*>(.*?)</i>")
-        .unwrap()
-        .replace_all(&out, "*$1*")
-        .into_owned();
-    out = Regex::new(r"(?i)<li[^>]*>")
-        .unwrap()
-        .replace_all(&out, "- ")
-        .into_owned();
-    out = Regex::new(r"(?i)</li\s*>")
-        .unwrap()
-        .replace_all(&out, "\n")
-        .into_owned();
-    out = Regex::new(r"<[^>]+>").unwrap().replace_all(&out, "").into_owned();
+    out = remove_blocks_ci(out, "<script", "</script>");
+    out = remove_blocks_ci(out, "<style", "</style>");
+    out = remove_marked_element(out, r#"<h4 class="panel-header">"#, "</h4>");
+    out = remove_marked_element(out, r#"<header class="page-header">"#, "</header>");
+    out = replace_ci(out, "<br>", "\n");
+    out = replace_ci(out, "<br/>", "\n");
+    out = replace_ci(out, "<br />", "\n");
+    out = replace_ci(out, "</p>", "\n\n");
+    out = replace_ci(out, "</P>", "\n\n");
+    out = replace_open_tag_ci(out, "p", "");
+    out = rewrite_wrapped_ci(out, "strong", "**", "**");
+    out = rewrite_wrapped_ci(out, "b", "**", "**");
+    out = rewrite_wrapped_ci(out, "em", "*", "*");
+    out = rewrite_wrapped_ci(out, "i", "*", "*");
+    out = replace_open_tag_ci(out, "li", "- ");
+    out = replace_ci(out, "</li>", "\n");
+    out = replace_ci(out, "</LI>", "\n");
+    out = strip_tags(&out);
     out = html_unescape(&out);
     let lines: Vec<_> = out.lines().map(|l| l.trim_end()).collect();
     let mut cleaned = String::new();
@@ -833,38 +855,6 @@ fn html_to_markdown(s: &str) -> String {
         }
     }
     cleaned.trim().to_string()
-}
-
-fn html_unescape(s: &str) -> String {
-    let mut out = s.to_string();
-    out = out
-        .replace("&amp;", "&")
-        .replace("&lt;", "<")
-        .replace("&gt;", ">")
-        .replace("&quot;", "\"")
-        .replace("&#039;", "'")
-        .replace("&apos;", "'")
-        .replace("&nbsp;", " ");
-    if let Ok(re) = Regex::new(r"&#(\d+);") {
-        out = re
-            .replace_all(&out, |caps: &regex::Captures| {
-                caps.get(1)
-                    .and_then(|m| m.as_str().parse::<u32>().ok())
-                    .and_then(char::from_u32)
-                    .map(|c| c.to_string())
-                    .unwrap_or_else(|| caps[0].to_string())
-            })
-            .into_owned();
-    }
-    out
-}
-
-fn collapse_ws(s: &str) -> String {
-    Regex::new(r"[ \t\r\n]+")
-        .unwrap()
-        .replace_all(s, " ")
-        .trim()
-        .to_string()
 }
 
 #[cfg(test)]

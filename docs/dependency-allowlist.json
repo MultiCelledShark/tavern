@@ -10,16 +10,13 @@
       "dotenvy",
       "hex",
       "mime_guess",
-      "once_cell",
       "rand",
-      "regex",
       "rust-embed",
       "serde",
       "serde-json",
       "serde_json",
       "sha2",
       "sqlx",
-      "thiserror",
       "tokio",
       "tower-http",
       "tracing",
@@ -34,11 +31,7 @@
       "tavern-import",
       "tavern-server"
     ],
-    "notes": {
-      "once_cell": "Phase 5 — remove with Campfire regex rewrite",
-      "regex": "Phase 5 — remove with Campfire regex rewrite",
-      "thiserror": "declared in workspace; prefer anyhow today"
-    }
+    "notes": {}
   },
   "npm": {
     "allowed_dependencies": [

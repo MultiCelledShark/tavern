@@ -15,5 +15,3 @@ tavern-core = { workspace = true }
 tracing = { workspace = true }
 zip = { workspace = true }
 uuid = { workspace = true }
-regex = "1"
-once_cell = "1"
