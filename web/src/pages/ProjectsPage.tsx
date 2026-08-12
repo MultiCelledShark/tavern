@@ -111,7 +111,7 @@ export default function ProjectsPage({
             Import Campfire / `.tavern` / JSON{" "}
             <input
               type="file"
-              accept=".json,.zip,.tavern,.camp,*"
+              accept=".json,.zip,.tavern,.camp,.html,*"
               onChange={(e) => onImport(e.target.files?.[0] || null)}
             />
           </label>

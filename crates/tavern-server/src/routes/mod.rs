@@ -1089,29 +1089,44 @@ async fn materialize_import(
             for p in pages {
                 state.db.delete_page(p.id).await?;
             }
-            let page = state
-                .db
-                .create_page(created.id, "Imported", "", 0)
-                .await?;
-            for (i, panel) in el.panels.iter().enumerate() {
-                let ptype =
-                    PanelType::parse(&panel.panel_type).unwrap_or(PanelType::Text);
-                let layout = panel
-                    .layout
-                    .clone()
-                    .unwrap_or_else(|| default_panel_layout_for(ptype.as_str(), i));
-                state
+            let mut page_groups: Vec<(String, Vec<&tavern_core::IntermediatePanel>)> = Vec::new();
+            for panel in &el.panels {
+                let page_name = panel
+                    .page_title
+                    .as_deref()
+                    .filter(|s| !s.is_empty())
+                    .unwrap_or("Imported");
+                if let Some(group) = page_groups.iter_mut().find(|(t, _)| t == page_name) {
+                    group.1.push(panel);
+                } else {
+                    page_groups.push((page_name.to_string(), vec![panel]));
+                }
+            }
+            for (page_idx, (page_title, panels)) in page_groups.iter().enumerate() {
+                let page = state
                     .db
-                    .create_panel(
-                        page.id,
-                        ptype,
-                        &panel.title,
-                        None,
-                        layout,
-                        panel.content.clone(),
-                        i as i64,
-                    )
+                    .create_page(created.id, page_title, "", page_idx as i64)
                     .await?;
+                for (i, panel) in panels.iter().enumerate() {
+                    let ptype =
+                        PanelType::parse(&panel.panel_type).unwrap_or(PanelType::Text);
+                    let layout = panel
+                        .layout
+                        .clone()
+                        .unwrap_or_else(|| default_panel_layout_for(ptype.as_str(), i));
+                    state
+                        .db
+                        .create_panel(
+                            page.id,
+                            ptype,
+                            &panel.title,
+                            None,
+                            layout,
+                            panel.content.clone(),
+                            i as i64,
+                        )
+                        .await?;
+                }
             }
         } else if let Some(md) = &el.body_markdown {
             let pages = state.db.list_pages(created.id).await?;

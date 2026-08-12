@@ -3,6 +3,7 @@
 use anyhow::Result;
 use once_cell::sync::Lazy;
 use regex::Regex;
+use std::collections::HashMap;
 use tavern_core::{
     IntermediateElement, IntermediateLink, IntermediatePanel, IntermediateProject,
 };
@@ -41,6 +42,16 @@ static RE_SECTION_OPEN: Lazy<Regex> =
 static RE_SECTION_CLOSE: Lazy<Regex> = Lazy::new(|| Regex::new(r"(?i)</section>").unwrap());
 static RE_CLASS: Lazy<Regex> =
     Lazy::new(|| Regex::new(r#"class="([^"]*)""#).unwrap());
+static RE_IMG: Lazy<Regex> = Lazy::new(|| {
+    Regex::new(r#"(?is)<img[^>]+src="([^"]+)"[^>]*(?:alt="([^"]*)")?[^>]*>"#).unwrap()
+});
+static RE_TABLE_ROW: Lazy<Regex> =
+    Lazy::new(|| Regex::new(r"(?is)<tr[^>]*>(.*?)</tr>").unwrap());
+static RE_TABLE_CELL: Lazy<Regex> =
+    Lazy::new(|| Regex::new(r"(?is)<t[hd][^>]*>(.*?)</t[hd]>").unwrap());
+static RE_EXPORT_ITEM: Lazy<Regex> = Lazy::new(|| {
+    Regex::new(r#"(?is)<section class="export-item([^"]*)"[^>]*>"#).unwrap()
+});
 
 pub fn looks_like_campfire_html(bytes: &[u8]) -> bool {
     let head = String::from_utf8_lossy(&bytes[..bytes.len().min(4000)]);
@@ -60,13 +71,9 @@ pub fn load_campfire_html(
         "Parsed Campfire HTML export".into(),
         format!("Source: {}", filename.unwrap_or("Campfire_Export.html")),
     ];
+    let mut module_counts: HashMap<String, usize> = HashMap::new();
 
-    let mut n_character = 0usize;
-    let mut n_location = 0usize;
-    let mut n_manuscript = 0usize;
-    let mut n_encyclopedia = 0usize;
-
-    for chunk in split_export_items(&html) {
+    for (item_tag, chunk) in split_export_items(&html) {
         let title = html_to_text(
             &RE_TITLE
                 .captures(chunk)
@@ -78,7 +85,8 @@ pub fn load_campfire_html(
             .map(|c| html_to_text(c.get(1).map(|m| m.as_str()).unwrap_or("")))
             .filter(|s| !s.is_empty());
 
-        let (module_type, unsup) = classify_item(chunk, &title);
+        let (module_type, unsup) = classify_item(chunk, &title, subtitle.as_deref(), &item_tag);
+        *module_counts.entry(module_type.clone()).or_default() += 1;
         if let Some(ref u) = unsup {
             unsupported.push(u.clone());
         }
@@ -87,7 +95,12 @@ pub fn load_campfire_html(
             "import_source": "campfire_html",
         });
         if let Some(sub) = &subtitle {
-            metadata["subtitle"] = serde_json::json!(sub);
+            metadata["campfire_module"] = serde_json::json!(sub);
+        }
+        if module_type == "timeline" {
+            if let Some(date) = extract_timeline_date(chunk) {
+                metadata["date"] = serde_json::json!(date);
+            }
         }
 
         let mut panels = Vec::new();
@@ -113,9 +126,10 @@ pub fn load_campfire_html(
                         .map(|c| html_to_text(c.get(1).map(|m| m.as_str()).unwrap_or("")))
                         .unwrap_or_else(|| page_title.clone());
 
-                    if let Some(p) =
+                    if let Some(mut p) =
                         map_panel(&panel_class, &panel_title, panel_html, &mut links, &title)
                     {
+                        p.page_title = Some(page_title.clone());
                         panels.push(p);
                         page_had_panel = true;
                     }
@@ -126,20 +140,14 @@ pub fn load_campfire_html(
                     if !md.trim().is_empty() {
                         panels.push(IntermediatePanel {
                             panel_type: "text".into(),
-                            title: page_title,
+                            title: page_title.clone(),
                             content: serde_json::json!({ "markdown": md }),
                             layout: None,
+                            page_title: Some(page_title),
                         });
                     }
                 }
             }
-        }
-
-        match module_type.as_str() {
-            "character" => n_character += 1,
-            "location" => n_location += 1,
-            "manuscript" => n_manuscript += 1,
-            _ => n_encyclopedia += 1,
         }
 
         elements.push(IntermediateElement {
@@ -153,12 +161,17 @@ pub fn load_campfire_html(
         });
     }
 
-    notes.push(format!(
-        "Mapped {n_character} characters, {n_location} locations, {n_manuscript} chapters, {n_encyclopedia} encyclopedia/timeline stubs"
-    ));
+    if !module_counts.is_empty() {
+        let mut parts: Vec<_> = module_counts
+            .iter()
+            .map(|(k, v)| format!("{v} {k}"))
+            .collect();
+        parts.sort();
+        notes.push(format!("Mapped {}", parts.join(", ")));
+    }
     if !unsupported.is_empty() {
         notes.push(format!(
-            "Non-v1 modules folded into encyclopedia ({} tagged items)",
+            "Heuristic fallbacks ({} items)",
             unsupported.len()
         ));
     }
@@ -191,8 +204,8 @@ pub fn load_campfire_html(
     Ok((project, report))
 }
 
-/// Split on export-item opens; each chunk runs until the next export-item (not first nested `</section>`).
-fn split_export_items(html: &str) -> Vec<&str> {
+/// Split on export-item opens; returns the opening tag and inner HTML for each item.
+fn split_export_items(html: &str) -> Vec<(&str, &str)> {
     let marker = r#"<section class="export-item"#;
     let mut starts = Vec::new();
     let mut search = 0;
@@ -203,47 +216,106 @@ fn split_export_items(html: &str) -> Vec<&str> {
     }
     let mut out = Vec::new();
     for (i, &start) in starts.iter().enumerate() {
-        // skip to end of opening tag
         let Some(gt) = html[start..].find('>') else {
             continue;
         };
-        let content_start = start + gt + 1;
+        let tag_end = start + gt + 1;
+        let item_tag = &html[start..tag_end];
+        let content_start = tag_end;
         let content_end = starts.get(i + 1).copied().unwrap_or(html.len());
-        // trim trailing close of this section if present before next item
         let mut chunk = &html[content_start..content_end];
         if let Some(idx) = chunk.rfind("</section>") {
-            // only trim the outermost trailing closer near the end
-            let after = &chunk[idx..];
-            if after.len() < 40 || chunk[idx..].matches("</section>").count() >= 1 {
-                // find the last </section> that closes export-item — take everything before final one if next item follows
-                if i + 1 < starts.len() {
-                    chunk = &chunk[..idx];
-                }
+            if i + 1 < starts.len() {
+                chunk = &chunk[..idx];
             }
         }
-        out.push(chunk);
+        out.push((item_tag, chunk));
     }
     out
 }
 
-fn classify_item(chunk: &str, title: &str) -> (String, Option<String>) {
+fn campfire_module_from_label(label: &str) -> Option<&'static str> {
+    match label.trim().to_ascii_lowercase().as_str() {
+        "manuscript" | "manuscripts" | "chapter" | "chapters" | "scene" | "scenes" => {
+            Some("manuscript")
+        }
+        "character" | "characters" => Some("character"),
+        "encyclopedia" | "article" | "articles" => Some("encyclopedia"),
+        "relationship" | "relationships" => Some("relationship"),
+        "location" | "locations" | "place" | "places" => Some("location"),
+        "systems" | "system" | "magic" | "tech" | "technology" => Some("systems"),
+        "maps" | "map" => Some("maps"),
+        "timeline" | "timelines" | "event" | "events" => Some("timeline"),
+        "species" | "races" | "race" => Some("species"),
+        "cultures" | "culture" => Some("cultures"),
+        "items" | "item" | "objects" | "object" => Some("items"),
+        "arcs" | "arc" | "plots" | "plot" => Some("arcs"),
+        "languages" | "language" => Some("languages"),
+        "religions" | "religion" | "beliefs" | "belief" => Some("religions"),
+        "research" | "notes" => Some("research"),
+        "philosophies" | "philosophy" => Some("philosophies"),
+        "calendar" | "calendars" => Some("calendar"),
+        _ => None,
+    }
+}
+
+fn classify_item(
+    chunk: &str,
+    title: &str,
+    subtitle: Option<&str>,
+    item_tag: &str,
+) -> (String, Option<String>) {
     if chunk.contains("manuscript-content") || chunk.contains("class=\"manuscript\"") {
         return ("manuscript".into(), None);
     }
+
+    if let Some(sub) = subtitle {
+        if let Some(mt) = campfire_module_from_label(sub) {
+            return (mt.into(), None);
+        }
+    }
+
+    if let Some(caps) = RE_EXPORT_ITEM.captures(item_tag) {
+        let extra = caps.get(1).map(|m| m.as_str()).unwrap_or("");
+        for token in extra.split_whitespace() {
+            if let Some(mt) = campfire_module_from_label(token) {
+                return (mt.into(), None);
+            }
+        }
+    }
+
     if is_location(chunk) || title_looks_like_place(title) {
         return ("location".into(), None);
     }
     if is_character(chunk) || title_looks_like_person(title, chunk) {
         return ("character".into(), None);
     }
-    let unsup = if looks_like_timeline(title, chunk) {
-        Some("timeline".into())
-    } else if chunk.to_ascii_lowercase().contains("research") {
+    if looks_like_timeline(title, chunk) {
+        return ("timeline".into(), Some("timeline_heuristic".into()));
+    }
+    if chunk.to_ascii_lowercase().contains("research") {
         return ("research".into(), None);
-    } else {
-        Some("unclassified".into())
-    };
-    ("encyclopedia".into(), unsup)
+    }
+    if chunk.contains(">Magic</") || chunk.contains(">Technology</") {
+        return ("systems".into(), None);
+    }
+    ("encyclopedia".into(), Some("unclassified".into()))
+}
+
+fn extract_timeline_date(chunk: &str) -> Option<String> {
+    for row in RE_ATTR_ROW.captures_iter(chunk) {
+        let key = html_to_text(row.get(1).map(|m| m.as_str()).unwrap_or(""));
+        if key.eq_ignore_ascii_case("date")
+            || key.eq_ignore_ascii_case("when")
+            || key.eq_ignore_ascii_case("year")
+        {
+            let value = html_to_text(row.get(2).map(|m| m.as_str()).unwrap_or(""));
+            if !value.is_empty() {
+                return Some(value);
+            }
+        }
+    }
+    None
 }
 
 fn is_character(chunk: &str) -> bool {
@@ -261,7 +333,6 @@ fn title_looks_like_person(title: &str, chunk: &str) -> bool {
         return false;
     }
     let words = title.split_whitespace().count();
-    // Campfire character stubs often have a short subtitle ("The Ship", "Port", …)
     let has_subtitle = chunk.contains("item-subtitle");
     (words <= 2 && has_subtitle) || (words == 1 && !chunk.contains("Research"))
 }
@@ -366,6 +437,7 @@ fn map_panel(
             title: panel_title.into(),
             content: serde_json::json!({ "items": items }),
             layout: None,
+            page_title: None,
         });
     }
     if class.contains("panel-list") || class.contains("list-panel") {
@@ -384,7 +456,6 @@ fn map_panel(
                 items.push(line);
             }
         }
-        // also grab tag badges as list entries when present
         if items.is_empty() {
             for tag in Regex::new(r#"(?s)class="tag-badge"[^>]*>(.*?)</"#)
                 .unwrap()
@@ -401,14 +472,28 @@ fn map_panel(
             title: panel_title.into(),
             content: serde_json::json!({ "items": items }),
             layout: None,
+            page_title: None,
         });
     }
+    if class.contains("panel-table") || class.contains("table-panel") || panel_html.contains("<table") {
+        if let Some(table) = extract_table(panel_html) {
+            return Some(IntermediatePanel {
+                panel_type: "table".into(),
+                title: panel_title.into(),
+                content: table,
+                layout: None,
+                page_title: None,
+            });
+        }
+    }
     if class.contains("panel-image") || panel_title.eq_ignore_ascii_case("Image") {
+        let images = extract_images(panel_html);
         return Some(IntermediatePanel {
             panel_type: "image".into(),
             title: panel_title.into(),
-            content: serde_json::json!({ "images": [], "note": "Images from Campfire HTML not extracted yet" }),
+            content: serde_json::json!({ "images": images }),
             layout: None,
+            page_title: None,
         });
     }
     if class.contains("link") || panel_title.eq_ignore_ascii_case("Links") {
@@ -428,23 +513,83 @@ fn map_panel(
             title: panel_title.into(),
             content: serde_json::json!({ "element_ids": [] }),
             layout: None,
+            page_title: None,
         });
     }
-    // text / stats / default
+    if class.contains("stat") {
+        let mut items = Vec::new();
+        for row in RE_ATTR_ROW.captures_iter(panel_html) {
+            let key = html_to_text(row.get(1).map(|m| m.as_str()).unwrap_or(""));
+            let value = html_to_text(row.get(2).map(|m| m.as_str()).unwrap_or(""));
+            if !key.is_empty() {
+                items.push(serde_json::json!({ "key": key, "value": value }));
+            }
+        }
+        if !items.is_empty() {
+            return Some(IntermediatePanel {
+                panel_type: "stats".into(),
+                title: panel_title.into(),
+                content: serde_json::json!({ "items": items }),
+                layout: None,
+                page_title: None,
+            });
+        }
+    }
     let md = html_to_markdown(panel_html);
     if md.trim().is_empty() {
         return None;
     }
     Some(IntermediatePanel {
-        panel_type: if class.contains("stat") {
-            "stats".into()
-        } else {
-            "text".into()
-        },
+        panel_type: "text".into(),
         title: panel_title.into(),
         content: serde_json::json!({ "markdown": md }),
         layout: None,
+        page_title: None,
     })
+}
+
+fn extract_table(html: &str) -> Option<serde_json::Value> {
+    let rows: Vec<Vec<String>> = RE_TABLE_ROW
+        .captures_iter(html)
+        .map(|row| {
+            RE_TABLE_CELL
+                .captures_iter(row.get(1).map(|m| m.as_str()).unwrap_or(""))
+                .map(|cell| html_to_text(cell.get(1).map(|m| m.as_str()).unwrap_or("")))
+                .collect()
+        })
+        .filter(|r: &Vec<String>| !r.is_empty())
+        .collect();
+    if rows.is_empty() {
+        return None;
+    }
+    let headers = rows[0].clone();
+    let body = if rows.len() > 1 {
+        rows[1..].to_vec()
+    } else {
+        vec![]
+    };
+    Some(serde_json::json!({ "headers": headers, "rows": body }))
+}
+
+fn extract_images(html: &str) -> Vec<serde_json::Value> {
+    RE_IMG
+        .captures_iter(html)
+        .filter_map(|cap| {
+            let url = cap.get(1).map(|m| m.as_str()).unwrap_or("").trim();
+            if url.is_empty() {
+                return None;
+            }
+            let caption = cap
+                .get(2)
+                .map(|m| html_to_text(m.as_str()))
+                .filter(|s| !s.is_empty());
+            Some(if let Some(c) = caption {
+                serde_json::json!({ "url": url, "caption": c })
+            } else {
+                serde_json::json!({ "url": url })
+            })
+        })
+        .collect()
 }
 
 fn extract_manuscript(chunk: &str) -> String {
@@ -518,7 +663,6 @@ fn html_to_markdown(s: &str) -> String {
         .unwrap()
         .replace_all(&out, "")
         .into_owned();
-    // drop panel headers already captured separately when present in chunk
     out = Regex::new(r#"(?is)<h4 class="panel-header">.*?</h4>"#)
         .unwrap()
         .replace_all(&out, "")
@@ -565,11 +709,7 @@ fn html_to_markdown(s: &str) -> String {
         .into_owned();
     out = Regex::new(r"<[^>]+>").unwrap().replace_all(&out, "").into_owned();
     out = html_unescape(&out);
-    // tidy blank lines
-    let lines: Vec<_> = out
-        .lines()
-        .map(|l| l.trim_end())
-        .collect();
+    let lines: Vec<_> = out.lines().map(|l| l.trim_end()).collect();
     let mut cleaned = String::new();
     let mut blank = 0;
     for line in lines {
@@ -588,13 +728,27 @@ fn html_to_markdown(s: &str) -> String {
 }
 
 fn html_unescape(s: &str) -> String {
-    s.replace("&amp;", "&")
+    let mut out = s.to_string();
+    out = out
+        .replace("&amp;", "&")
         .replace("&lt;", "<")
         .replace("&gt;", ">")
         .replace("&quot;", "\"")
         .replace("&#039;", "'")
         .replace("&apos;", "'")
-        .replace("&nbsp;", " ")
+        .replace("&nbsp;", " ");
+    if let Ok(re) = Regex::new(r"&#(\d+);") {
+        out = re
+            .replace_all(&out, |caps: &regex::Captures| {
+                caps.get(1)
+                    .and_then(|m| m.as_str().parse::<u32>().ok())
+                    .and_then(char::from_u32)
+                    .map(|c| c.to_string())
+                    .unwrap_or_else(|| caps[0].to_string())
+            })
+            .into_owned();
+    }
+    out
 }
 
 fn collapse_ws(s: &str) -> String {
@@ -609,9 +763,57 @@ fn collapse_ws(s: &str) -> String {
 mod tests {
     use super::*;
 
+    const FIXTURE: &str = include_str!("../../../samples/campfire_export.html");
+
     #[test]
     fn detects_generator() {
         let s = br#"<html><head><meta name="generator" content="Campfire Export Server">"#;
         assert!(looks_like_campfire_html(s));
+    }
+
+    #[test]
+    fn parses_sample_export() {
+        let (project, report) = load_campfire_html(FIXTURE.as_bytes(), Some("campfire_export.html"))
+            .expect("parse sample");
+        assert_eq!(report.format, "campfire_html");
+        assert!(project.elements.len() >= 8, "expected multiple modules");
+
+        let modules: std::collections::HashSet<_> = project
+            .elements
+            .iter()
+            .map(|e| e.module_type.as_str())
+            .collect();
+        assert!(modules.contains("character"));
+        assert!(modules.contains("location"));
+        assert!(modules.contains("manuscript"));
+        assert!(modules.contains("timeline"));
+        assert!(modules.contains("species"));
+        assert!(modules.contains("systems"));
+
+        let asha = project
+            .elements
+            .iter()
+            .find(|e| e.title == "Asha Korr")
+            .expect("character");
+        assert_eq!(asha.module_type, "character");
+        assert!(asha.panels.iter().any(|p| p.panel_type == "attributes"));
+        assert!(asha.panels.iter().any(|p| p.page_title.is_some()));
+
+        let timeline = project
+            .elements
+            .iter()
+            .find(|e| e.module_type == "timeline")
+            .expect("timeline event");
+        assert_eq!(timeline.metadata["date"], "2147-03");
+
+        assert!(!project.links.is_empty());
+    }
+
+    #[test]
+    fn maps_subtitle_modules() {
+        assert_eq!(campfire_module_from_label("Characters"), Some("character"));
+        assert_eq!(campfire_module_from_label("Timeline"), Some("timeline"));
+        assert_eq!(campfire_module_from_label("Species"), Some("species"));
+        assert_eq!(campfire_module_from_label("Research"), Some("research"));
     }
 }

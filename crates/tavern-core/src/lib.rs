@@ -355,6 +355,9 @@ pub struct IntermediatePanel {
     pub title: String,
     pub content: serde_json::Value,
     pub layout: Option<PanelLayout>,
+    /// Campfire page name this panel belonged to (preserved on HTML import).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub page_title: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

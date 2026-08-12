@@ -401,6 +401,10 @@ fn map_element_value(item: &Value, _unsupported: &mut Vec<String>) -> Intermedia
                 layout: p
                     .get("layout")
                     .and_then(|v| serde_json::from_value::<PanelLayout>(v.clone()).ok()),
+                page_title: p
+                    .get("page_title")
+                    .and_then(|x| x.as_str())
+                    .map(|s| s.to_string()),
             });
         }
     } else if let Some(md) = &body {
@@ -409,6 +413,7 @@ fn map_element_value(item: &Value, _unsupported: &mut Vec<String>) -> Intermedia
             title: "Content".into(),
             content: serde_json::json!({ "markdown": md }),
             layout: None,
+            page_title: None,
         });
     }
 

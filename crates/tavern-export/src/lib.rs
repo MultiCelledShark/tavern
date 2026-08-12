@@ -220,6 +220,7 @@ pub fn elements_to_intermediate(
                 title: p.title,
                 content: p.content,
                 layout: Some(p.layout),
+                page_title: None,
             })
             .collect();
         out_elements.push(IntermediateElement {
