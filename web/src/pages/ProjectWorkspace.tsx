@@ -4,7 +4,6 @@ import {
   api,
   Element,
   ElementLink,
-  MODULES,
   ModuleType,
   Project,
   ProjectGrant,
@@ -24,6 +23,12 @@ import {
   loadChrome,
   saveChrome,
 } from "../lib/chrome";
+import {
+  loadModuleOrder,
+  moveModule,
+  orderedModules,
+  saveModuleOrder,
+} from "../lib/moduleOrder";
 import { TIPS } from "../tips";
 
 const MODULE_TIPS: Record<ModuleType, string> = {
@@ -68,12 +73,19 @@ export default function ProjectWorkspace({
   const [grantUser, setGrantUser] = useState("");
   const [newTitle, setNewTitle] = useState("");
   const [chrome, setChrome] = useState<ChromeState>(() => loadChrome());
+  const [moduleOrder, setModuleOrder] = useState<ModuleType[]>(() => loadModuleOrder());
+  const [draggingModule, setDraggingModule] = useState<ModuleType | null>(null);
+  const [overModule, setOverModule] = useState<ModuleType | null>(null);
+  const dragModuleRef = useRef<ModuleType | null>(null);
+  const moduleDidDragRef = useRef(false);
   const [compact, setCompact] = useState(
     () => typeof window !== "undefined" && window.matchMedia(COMPACT_MQ).matches
   );
   const focusSnapshot = useRef<ChromeState | null>(null);
   const topbarRef = useRef<HTMLElement | null>(null);
   const shellRef = useRef<HTMLDivElement | null>(null);
+
+  const modules = useMemo(() => orderedModules(moduleOrder), [moduleOrder]);
 
   const selected = useMemo(
     () => elements.find((e) => e.id === selectedId) || null,
@@ -91,6 +103,14 @@ export default function ProjectWorkspace({
   useEffect(() => {
     saveChrome(chrome);
   }, [chrome]);
+
+  useEffect(() => {
+    saveModuleOrder(moduleOrder);
+  }, [moduleOrder]);
+
+  function applyModuleMove(fromId: ModuleType, toId: ModuleType) {
+    setModuleOrder((prev) => moveModule(prev, fromId, toId));
+  }
 
   useEffect(() => {
     const mq = window.matchMedia(COMPACT_MQ);
@@ -360,13 +380,66 @@ export default function ProjectWorkspace({
             Hide
           </button>
         </div>
-        {MODULES.map((m) => (
+        {modules.map((m) => (
           <button
             key={m.id}
             type="button"
-            className={`tip-right${module === m.id ? " active" : ""}`}
-            data-tip={MODULE_TIPS[m.id]}
+            draggable
+            className={[
+              "module-rail-item",
+              "tip-right",
+              module === m.id ? "active" : "",
+              draggingModule === m.id ? "dragging" : "",
+              overModule === m.id && draggingModule && draggingModule !== m.id
+                ? "drop-target"
+                : "",
+            ]
+              .filter(Boolean)
+              .join(" ")}
+            data-tip={`${MODULE_TIPS[m.id]} — ${TIPS.moduleDrag}`}
+            onDragStart={(e) => {
+              moduleDidDragRef.current = false;
+              dragModuleRef.current = m.id;
+              setDraggingModule(m.id);
+              e.dataTransfer.effectAllowed = "move";
+              e.dataTransfer.setData("text/plain", m.id);
+            }}
+            onDragEnd={() => {
+              dragModuleRef.current = null;
+              setDraggingModule(null);
+              setOverModule(null);
+              // click fires after dragend in some browsers — keep the flag briefly
+              window.setTimeout(() => {
+                moduleDidDragRef.current = false;
+              }, 0);
+            }}
+            onDragOver={(e) => {
+              e.preventDefault();
+              e.dataTransfer.dropEffect = "move";
+              if (dragModuleRef.current && dragModuleRef.current !== m.id) {
+                moduleDidDragRef.current = true;
+                setOverModule(m.id);
+              }
+            }}
+            onDragLeave={() => {
+              setOverModule((id) => (id === m.id ? null : id));
+            }}
+            onDrop={(e) => {
+              e.preventDefault();
+              moduleDidDragRef.current = true;
+              const fromId = (e.dataTransfer.getData("text/plain") ||
+                dragModuleRef.current) as ModuleType | null;
+              setOverModule(null);
+              setDraggingModule(null);
+              dragModuleRef.current = null;
+              if (!fromId) return;
+              applyModuleMove(fromId, m.id);
+            }}
             onClick={() => {
+              if (moduleDidDragRef.current) {
+                moduleDidDragRef.current = false;
+                return;
+              }
               setModule(m.id);
               setCorkboard(false);
               if (compact) {
@@ -380,7 +453,10 @@ export default function ProjectWorkspace({
               }
             }}
           >
-            {m.label}
+            <span className="module-drag-handle" aria-hidden="true">
+              ⠿
+            </span>
+            <span className="module-label">{m.label}</span>
           </button>
         ))}
       </nav>

@@ -3,6 +3,7 @@ export const TIPS = {
   brand: "Return to your project list",
   focus: "Collapse Modules, Items, and Inspector — tap again to restore",
   chromeModules: "Show or hide the module rail (Manuscript, Characters, …)",
+  moduleDrag: "Drag onto another module to reorder this list",
   chromeList: "Show or hide the item list for the current module",
   chromeInspector: "Show or hide the inspector (delete, sharing, bible)",
   chromeTools: "Show or hide export, backup, and account actions",
