@@ -39,9 +39,10 @@ Fill `docs/homelab.md` (gitignored) or Forgejo wiki with:
 
 On a build host (or CI):
 
-1. `cd web && npm ci && npm run build && cd ..`
-2. `cargo build -p tavern-server --release`
-3. Record commit SHA on the binary host for rollback
+1. `./scripts/check-deps.sh` (allowlist + `cargo deny` + `npm audit`)
+2. `cd web && npm ci && npm run build && cd ..`
+3. `cargo build -p tavern-server --release`
+4. Record commit SHA on the binary host for rollback
 
 Ship: `target/release/tavern` (or musl static build if preferred).
 
