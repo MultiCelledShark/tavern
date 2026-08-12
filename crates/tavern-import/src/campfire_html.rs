@@ -49,6 +49,12 @@ static RE_TABLE_ROW: Lazy<Regex> =
     Lazy::new(|| Regex::new(r"(?is)<tr[^>]*>(.*?)</tr>").unwrap());
 static RE_TABLE_CELL: Lazy<Regex> =
     Lazy::new(|| Regex::new(r"(?is)<t[hd][^>]*>(.*?)</t[hd]>").unwrap());
+static RE_STAT_ITEM: Lazy<Regex> = Lazy::new(|| {
+    Regex::new(
+        r#"(?s)class="stat-name"[^>]*>(.*?)</span>\s*<span class="stat-value"[^>]*>(.*?)</span>"#,
+    )
+    .unwrap()
+});
 static RE_EXPORT_ITEM: Lazy<Regex> = Lazy::new(|| {
     Regex::new(r#"(?is)<section class="export-item([^"]*)"[^>]*>"#).unwrap()
 });
@@ -95,7 +101,11 @@ pub fn load_campfire_html(
             "import_source": "campfire_html",
         });
         if let Some(sub) = &subtitle {
-            metadata["campfire_module"] = serde_json::json!(sub);
+            if campfire_module_from_label(sub).is_some() {
+                metadata["campfire_module"] = serde_json::json!(sub);
+            } else {
+                metadata["subtitle"] = serde_json::json!(sub);
+            }
         }
         if module_type == "timeline" {
             if let Some(date) = extract_timeline_date(chunk) {
@@ -190,7 +200,7 @@ pub fn load_campfire_html(
         title: project_title,
         synopsis: "Imported from Campfire HTML export".into(),
         elements,
-        links,
+        links: dedupe_links(links),
     };
 
     let report = ImportReport {
@@ -269,6 +279,8 @@ fn classify_item(
         return ("manuscript".into(), None);
     }
 
+    // Real Campfire exports put nicknames in item-subtitle; only trust it when it
+    // is an actual module label (e.g. "Characters", "Timeline").
     if let Some(sub) = subtitle {
         if let Some(mt) = campfire_module_from_label(sub) {
             return (mt.into(), None);
@@ -284,22 +296,31 @@ fn classify_item(
         }
     }
 
+    if is_research(chunk) {
+        return ("research".into(), None);
+    }
     if is_location(chunk) || title_looks_like_place(title) {
         return ("location".into(), None);
     }
     if is_character(chunk) || title_looks_like_person(title, chunk) {
         return ("character".into(), None);
     }
+    if title_looks_like_species(title) {
+        return ("species".into(), Some("species_heuristic".into()));
+    }
     if looks_like_timeline(title, chunk) {
         return ("timeline".into(), Some("timeline_heuristic".into()));
-    }
-    if chunk.to_ascii_lowercase().contains("research") {
-        return ("research".into(), None);
     }
     if chunk.contains(">Magic</") || chunk.contains(">Technology</") {
         return ("systems".into(), None);
     }
     ("encyclopedia".into(), Some("unclassified".into()))
+}
+
+fn is_research(chunk: &str) -> bool {
+    chunk.contains("panel-research")
+        || chunk.contains("research-panel")
+        || chunk.contains("class=\"research\"")
 }
 
 fn extract_timeline_date(chunk: &str) -> Option<String> {
@@ -329,12 +350,29 @@ fn is_character(chunk: &str) -> bool {
 }
 
 fn title_looks_like_person(title: &str, chunk: &str) -> bool {
-    if looks_like_timeline(title, chunk) || title_looks_like_place(title) {
+    if looks_like_timeline(title, chunk)
+        || title_looks_like_place(title)
+        || title_looks_like_species(title)
+        || is_research(chunk)
+    {
         return false;
     }
     let words = title.split_whitespace().count();
     let has_subtitle = chunk.contains("item-subtitle");
-    (words <= 2 && has_subtitle) || (words == 1 && !chunk.contains("Research"))
+    // Empty character stubs often still have an empty page-panels container;
+    // timeline stubs frequently omit it.
+    let has_panels_slot = chunk.contains("page-panels");
+    (words <= 2 && has_subtitle)
+        || (words == 1 && has_panels_slot && !title.contains('-') && !title.contains('_'))
+}
+
+fn title_looks_like_species(title: &str) -> bool {
+    let t = title.to_ascii_lowercase();
+    t.contains("morph")
+        || t.contains("species")
+        || t.contains("race")
+        || t.ends_with("folk")
+        || t.ends_with("kin")
 }
 
 fn title_looks_like_place(title: &str) -> bool {
@@ -395,12 +433,15 @@ fn extract_sections<'a>(html: &'a str, needle: &str) -> Vec<(&'a str, &'a str)> 
 
 fn looks_like_timeline(title: &str, _chunk: &str) -> bool {
     let t = title.to_ascii_lowercase();
-    let verbs = [
+    // Event-style titles from Campfire Timeline modules. Avoid nouns like
+    // "species" / "morphs" that belong to research or species entries.
+    let signals = [
         "proposed",
         "begins",
         "begin",
         "launch",
         "enters",
+        " enter ",
         "disabled",
         "online",
         "manufactures",
@@ -408,11 +449,18 @@ fn looks_like_timeline(title: &str, _chunk: &str) -> bool {
         "established",
         "reassigned",
         "refitted",
-        "effects on",
-        "species",
-        "morphs",
+        "constructed",
+        "founded",
+        "destroyed",
+        "arrived",
+        "departs",
+        "departed",
     ];
-    verbs.iter().any(|v| t.contains(v))
+    if signals.iter().any(|v| t.contains(v)) {
+        return true;
+    }
+    // "Colony Ships Enter neighboring clusters"
+    t.split_whitespace().any(|w| w == "enter" || w == "enters")
 }
 
 fn map_panel(
@@ -516,13 +564,23 @@ fn map_panel(
             page_title: None,
         });
     }
-    if class.contains("stat") {
+    if class.contains("stat") || panel_html.contains("stats-panel") || panel_html.contains("stat-item")
+    {
         let mut items = Vec::new();
-        for row in RE_ATTR_ROW.captures_iter(panel_html) {
+        for row in RE_STAT_ITEM.captures_iter(panel_html) {
             let key = html_to_text(row.get(1).map(|m| m.as_str()).unwrap_or(""));
             let value = html_to_text(row.get(2).map(|m| m.as_str()).unwrap_or(""));
-            if !key.is_empty() {
+            if !key.is_empty() || !value.is_empty() {
                 items.push(serde_json::json!({ "key": key, "value": value }));
+            }
+        }
+        if items.is_empty() {
+            for row in RE_ATTR_ROW.captures_iter(panel_html) {
+                let key = html_to_text(row.get(1).map(|m| m.as_str()).unwrap_or(""));
+                let value = html_to_text(row.get(2).map(|m| m.as_str()).unwrap_or(""));
+                if !key.is_empty() {
+                    items.push(serde_json::json!({ "key": key, "value": value }));
+                }
             }
         }
         if !items.is_empty() {
@@ -534,6 +592,26 @@ fn map_panel(
                 page_title: None,
             });
         }
+    }
+    if class.contains("research") || panel_html.contains("research-panel") {
+        let md = if let Some(caps) = Regex::new(r#"(?s)class="research-text-content"[^>]*>(.*?)</div>"#)
+            .ok()
+            .and_then(|re| re.captures(panel_html))
+        {
+            html_to_markdown(caps.get(1).map(|m| m.as_str()).unwrap_or(""))
+        } else {
+            html_to_markdown(panel_html)
+        };
+        if md.trim().is_empty() {
+            return None;
+        }
+        return Some(IntermediatePanel {
+            panel_type: "text".into(),
+            title: panel_title.into(),
+            content: serde_json::json!({ "markdown": md }),
+            layout: None,
+            page_title: None,
+        });
     }
     let md = html_to_markdown(panel_html);
     if md.trim().is_empty() {
@@ -628,6 +706,22 @@ fn guess_project_title(elements: &[IntermediateElement]) -> Option<String> {
                 .find(|e| e.module_type == "character")
                 .map(|e| format!("{}'s Story", e.title))
         })
+}
+
+fn dedupe_links(links: Vec<IntermediateLink>) -> Vec<IntermediateLink> {
+    let mut seen = std::collections::HashSet::new();
+    let mut out = Vec::new();
+    for link in links {
+        let key = (
+            link.from_title.clone(),
+            link.to_title.clone(),
+            link.link_type.clone(),
+        );
+        if seen.insert(key) {
+            out.push(link);
+        }
+    }
+    out
 }
 
 fn html_to_text(s: &str) -> String {
@@ -788,25 +882,51 @@ mod tests {
         assert!(modules.contains("manuscript"));
         assert!(modules.contains("timeline"));
         assert!(modules.contains("species"));
-        assert!(modules.contains("systems"));
+        assert!(modules.contains("research"));
 
-        let asha = project
+        let sirah = project
             .elements
             .iter()
-            .find(|e| e.title == "Asha Korr")
+            .find(|e| e.title == "Sirah")
             .expect("character");
-        assert_eq!(asha.module_type, "character");
-        assert!(asha.panels.iter().any(|p| p.panel_type == "attributes"));
-        assert!(asha.panels.iter().any(|p| p.page_title.is_some()));
+        assert_eq!(sirah.module_type, "character");
+        assert!(sirah.panels.iter().any(|p| p.panel_type == "attributes"));
+        assert!(sirah.panels.iter().any(|p| p.panel_type == "stats"));
+        assert!(sirah.panels.iter().any(|p| p.panel_type == "image"));
+        assert!(sirah.panels.iter().any(|p| p.page_title.as_deref() == Some("Backstory")));
+
+        let rati = project
+            .elements
+            .iter()
+            .find(|e| e.title == "Rati")
+            .expect("character with nickname");
+        assert_eq!(rati.module_type, "character");
+        assert_eq!(rati.metadata["subtitle"], "The Ship");
+        assert!(rati.metadata.get("campfire_module").is_none());
+
+        let research = project
+            .elements
+            .iter()
+            .find(|e| e.title == "Hurricane Effects on Radios")
+            .expect("research");
+        assert_eq!(research.module_type, "research");
+
+        let species = project
+            .elements
+            .iter()
+            .find(|e| e.title == "Shark-morphs")
+            .expect("species");
+        assert_eq!(species.module_type, "species");
 
         let timeline = project
             .elements
             .iter()
-            .find(|e| e.module_type == "timeline")
+            .find(|e| e.title == "Colony Ships Enter neighboring clusters")
             .expect("timeline event");
-        assert_eq!(timeline.metadata["date"], "2147-03");
+        assert_eq!(timeline.module_type, "timeline");
 
-        assert!(!project.links.is_empty());
+        // Duplicate Links panels across pages should not duplicate edges.
+        assert_eq!(project.links.len(), 2);
     }
 
     #[test]
@@ -815,5 +935,6 @@ mod tests {
         assert_eq!(campfire_module_from_label("Timeline"), Some("timeline"));
         assert_eq!(campfire_module_from_label("Species"), Some("species"));
         assert_eq!(campfire_module_from_label("Research"), Some("research"));
+        assert_eq!(campfire_module_from_label("The Ship"), None);
     }
 }
