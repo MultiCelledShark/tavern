@@ -103,12 +103,18 @@ export default function Corkboard({
   }, [elements]);
 
   const persist = useCallback(
-    async (next: CorkItem[]) => {
+    async (next: CorkItem[], previous: CorkItem[]) => {
+      const prevById = new Map(previous.map((it) => [it.id, it]));
+      const dirty = next.filter((it) => {
+        const old = prevById.get(it.id);
+        return !old || old.sort_order !== it.sort_order || old.title !== it.title;
+      });
+      if (!dirty.length) return;
       setBusy(true);
       setError(null);
       try {
         await Promise.all(
-          next.map((it) =>
+          dirty.map((it) =>
             api.updateElement(it.id, {
               title: it.title,
               parent_id: it.parent_id,
@@ -135,19 +141,21 @@ export default function Corkboard({
   async function undo() {
     if (!past.length || busy) return;
     const prev = past[past.length - 1];
+    const current = cloneItems(itemsRef.current);
     setPast((p) => p.slice(0, -1));
-    setFuture((f) => [...f, cloneItems(itemsRef.current)]);
+    setFuture((f) => [...f, current]);
     setItems(cloneItems(prev));
-    await persist(prev);
+    await persist(prev, current);
   }
 
   async function redo() {
     if (!future.length || busy) return;
     const next = future[future.length - 1];
+    const current = cloneItems(itemsRef.current);
     setFuture((f) => f.slice(0, -1));
-    setPast((p) => [...p, cloneItems(itemsRef.current)]);
+    setPast((p) => [...p, current]);
     setItems(cloneItems(next));
-    await persist(next);
+    await persist(next, current);
   }
 
   async function resetLayout() {
@@ -156,9 +164,10 @@ export default function Corkboard({
       ? cloneItems(baselineRef.current)
       : fromElements(elements);
     if (sameLayout(itemsRef.current, baseline)) return;
-    pushHistory(itemsRef.current);
+    const current = cloneItems(itemsRef.current);
+    pushHistory(current);
     setItems(baseline);
-    await persist(baseline);
+    await persist(baseline, current);
   }
 
   async function applyMove(fromId: string, toId: string) {
@@ -167,7 +176,7 @@ export default function Corkboard({
     if (sameLayout(before, next)) return;
     pushHistory(before);
     setItems(next);
-    await persist(next);
+    await persist(next, before);
   }
 
   async function commitRename(id: string, title: string) {
@@ -187,7 +196,7 @@ export default function Corkboard({
     );
     pushHistory(before);
     setItems(next);
-    await persist(next);
+    await persist(next, before);
   }
 
   return (
@@ -246,9 +255,14 @@ export default function Corkboard({
             onDragOver={(e) => {
               e.preventDefault();
               e.dataTransfer.dropEffect = "move";
-              if (dragIdRef.current && dragIdRef.current !== it.id) setOverId(it.id);
+              if (dragIdRef.current && dragIdRef.current !== it.id) {
+                setOverId((cur) => (cur === it.id ? cur : it.id));
+              }
             }}
-            onDragLeave={() => {
+            onDragLeave={(e) => {
+              // Ignore leave events that stay within this card (child nodes).
+              const related = e.relatedTarget as Node | null;
+              if (related && e.currentTarget.contains(related)) return;
               setOverId((id) => (id === it.id ? null : id));
             }}
             onDrop={(e) => {

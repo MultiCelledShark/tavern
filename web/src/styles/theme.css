@@ -991,6 +991,76 @@ label.buttonish {
   background: var(--panel);
   border: 1px solid var(--border);
   border-radius: 10px;
+  overflow: hidden;
+  position: relative;
+  touch-action: none;
+  cursor: grab;
+}
+
+.relationship-canvas:active {
+  cursor: grabbing;
+}
+
+.relationship-world {
+  position: relative;
+  will-change: transform;
+}
+
+.relationship-edges {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  overflow: visible;
+}
+
+.relationship-node {
+  position: absolute;
+  display: flex;
+  align-items: center;
+  gap: 0.35rem;
+  padding: 0.45rem 0.65rem;
+  padding-right: 1.35rem;
+  box-sizing: border-box;
+  background: #fff;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  font-family: var(--font-display);
+  font-size: 0.95rem;
+  box-shadow: 0 4px 14px rgba(28, 36, 33, 0.06);
+  cursor: grab;
+  user-select: none;
+  touch-action: none;
+}
+
+.relationship-node:active {
+  cursor: grabbing;
+}
+
+.relationship-node-label {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  min-width: 0;
+  flex: 1;
+}
+
+.relationship-port {
+  position: absolute;
+  right: -7px;
+  top: 50%;
+  transform: translateY(-50%);
+  width: 14px;
+  height: 14px;
+  padding: 0;
+  border-radius: 50%;
+  border: 2px solid var(--moss);
+  background: var(--panel);
+  cursor: crosshair;
+  touch-action: none;
+}
+
+.relationship-port:hover {
+  background: color-mix(in srgb, var(--moss) 25%, white);
 }
 
 .muted { color: var(--muted); }

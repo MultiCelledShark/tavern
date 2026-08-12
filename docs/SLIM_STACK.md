@@ -51,11 +51,11 @@ Workspace path crates (`tavern-core`, `tavern-db`, `tavern-import`, `tavern-expo
 
 | Package | Remove in |
 |---|---|
-| `@xyflow/react` | Phase 3 (relationship graph) |
+| `react-router-dom` | Phase 4 (optional) |
 
-**Dev-only allow:** `vite`, `@vitejs/plugin-react`, `typescript`, `@types/react`, `@types/react-dom`, plus `@types/*` only while a runtime package that needs them remains.
+**Dev-only allow:** `vite`, `@vitejs/plugin-react`, `typescript`, `@types/react`, `@types/react-dom`.
 
-**Hard deny:** `@tiptap/*`, `react-grid-layout`, `turndown`, and any new runtime package not listed above.
+**Hard deny:** `@tiptap/*`, `react-grid-layout`, `@xyflow/react`, `turndown`, and any new runtime package not listed above.
 
 ### Policy artifacts
 
@@ -95,10 +95,12 @@ Replace `react-grid-layout` with CSS/absolute grid + pointer drag/resize (`Panel
 
 ### Phase 3 — Relationship graph
 
-Replace `@xyflow/react` with SVG/div pan-zoom graph.
+Replace `@xyflow/react` with SVG/div pan-zoom graph (`RelationshipGraph`).
 
 **Touch:** `RelationshipGraph.tsx`  
 **Exit:** create/select/undo links; XYFlow gone.
+
+Also: corkboard drag lag is unrelated to XYFlow — fixed by avoiding per-`dragover` React state churn and only persisting dirty cards.
 
 ### Phase 4 — Router (optional)
 
@@ -121,14 +123,14 @@ Vendoring/mirroring if needed; Renovate only for allowlisted packages; periodic 
 
 ## Baseline counts
 
-Captured during Phases 0–2 (re-run `scripts/check-dependency-allowlist.sh` for live numbers):
+Captured during Phases 0–3 (re-run `scripts/check-dependency-allowlist.sh` for live numbers):
 
-| Layer | Before Phase 0 | After Phase 1 | After Phase 2 | Target after Phase 3 |
-|---|---|---|---|---|
-| Web runtime direct | 11 | 5 | **4** | 2–3 |
-| Web lockfile packages | ~223 | ~154 | **~95** | ~30–60 |
-| Rust direct external | ~26 | ~23 | ~23 | ~15–18 |
-| Rust transitive | ~250 | ~250 | ~250 | ~150–200 (tokio/sqlx dominate) |
+| Layer | Before Phase 0 | After Phase 1 | After Phase 2 | After Phase 3 | Target |
+|---|---|---|---|---|---|
+| Web runtime direct | 11 | 5 | 4 | **3** | 2–3 |
+| Web lockfile packages | ~223 | ~154 | ~95 | **~75** | ~30–60 |
+| Rust direct external | ~26 | ~23 | ~23 | ~23 | ~15–18 |
+| Rust transitive | ~250 | ~250 | ~250 | ~250 | ~150–200 (tokio/sqlx dominate) |
 
 Meaningful supply-chain shrink is mostly on the **npm** side. Rust stays chunky because tokio/sqlx are deep — that is the accepted trade.
 
@@ -139,4 +141,5 @@ Meaningful supply-chain shrink is mostly on the **npm** side. Rust stays chunky 
 | 0 Freeze & baseline | done |
 | 1 TipTap → bespoke editor | done |
 | 2 grid-layout → PanelGrid | done |
-| 3–6 | not started |
+| 3 XYFlow → bespoke graph | done |
+| 4–6 | not started |
