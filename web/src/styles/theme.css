@@ -171,32 +171,99 @@ label.buttonish {
   padding: 0.45rem 0.85rem;
 }
 
-.image-grid {
-  display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(120px, 1fr));
+.image-panel {
+  height: 100%;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
   gap: 0.65rem;
 }
 
-.image-thumb {
+.image-panel.solo {
+  min-height: 12rem;
+}
+
+.image-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(160px, 1fr));
+  gap: 0.65rem;
+  flex: 1;
+  min-height: 0;
+  align-content: stretch;
+}
+
+.image-grid.solo {
+  grid-template-columns: 1fr;
+  min-height: 14rem;
+}
+
+.image-figure {
   margin: 0;
   background: var(--paper);
   border: 1px solid var(--border);
   border-radius: 8px;
   overflow: hidden;
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+  height: 100%;
 }
 
-.image-thumb img {
-  display: block;
-  width: 100%;
-  height: 110px;
-  object-fit: cover;
+.image-frame {
+  flex: 1 1 auto;
+  min-height: 10rem;
+  display: flex;
+  align-items: center;
+  justify-content: center;
   background: #dfe5e1;
+  padding: 0.35rem;
 }
 
-.image-thumb figcaption {
-  padding: 0.4rem;
+.image-grid.solo .image-frame {
+  min-height: 16rem;
+}
+
+.image-frame img {
+  display: block;
+  max-width: 100%;
+  max-height: 100%;
+  width: auto;
+  height: auto;
+  object-fit: contain;
+  object-position: center;
+}
+
+.image-caption {
+  flex: 0 0 auto;
+  padding: 0.45rem 0.55rem;
   display: grid;
   gap: 0.35rem;
+  border-top: 1px solid var(--border);
+  background: color-mix(in srgb, var(--stone) 55%, white);
+  font-size: 0.9rem;
+  line-height: 1.35;
+  overflow-wrap: anywhere;
+  word-break: break-word;
+}
+
+.image-caption input {
+  width: 100%;
+}
+
+.image-panel-actions {
+  flex: 0 0 auto;
+}
+
+/* Keep image panels from collapsing to a crop strip inside the grid */
+.react-grid-item .panel-body:has(.image-panel) {
+  display: flex;
+  flex-direction: column;
+}
+
+.react-grid-item .panel-body:has(.image-panel) > .image-panel {
+  flex: 1;
+  min-height: 0;
 }
 
 .map-stage {

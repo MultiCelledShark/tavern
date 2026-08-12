@@ -48,7 +48,7 @@ export const TIPS = {
   addTableRow: "Add a blank row to the table",
   panelText: "Markdown text for this panel — saves on blur",
   panelLinks: "One linked element id per line",
-  imageCaption: "Optional caption under this image",
+  imageCaption: "Caption shown under the image and as its hover tip",
   removeImage: "Remove this image from the panel",
   msTitle: "Chapter or scene title — saves on blur",
   msSource: "Toggle between rich editor and raw markdown source",

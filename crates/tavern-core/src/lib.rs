@@ -389,7 +389,7 @@ pub fn default_panel_layout_for(panel_type: &str, index: usize) -> PanelLayout {
         "text" => (6.0, 8.0),
         "attributes" | "stats" | "list" => (6.0, 6.0),
         "table" => (6.0, 6.0),
-        "image" => (6.0, 7.0),
+        "image" => (6.0, 10.0),
         "links" => (6.0, 5.0),
         _ => (6.0, 6.0),
     };

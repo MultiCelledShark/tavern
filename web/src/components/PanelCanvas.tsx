@@ -479,47 +479,65 @@ function PanelEditor({
 
   if (panel.panel_type === "image") {
     const images = (content.images as ImageRef[]) || [];
+    const solo = images.length === 1;
     return (
-      <div className="image-panel stack">
-        <div className="image-grid">
-          {images.map((img, i) => (
-            <figure key={`${img.url}-${i}`} className="image-thumb">
-              <img src={img.url} alt={img.caption || ""} />
-              <figcaption>
-                <input
-                  value={img.caption || ""}
-                  placeholder="Caption"
-                  disabled={!canEdit}
-                  data-tip={TIPS.imageCaption}
-                  onChange={(e) => {
-                    const next = images.slice();
-                    next[i] = { ...img, caption: e.target.value };
-                    onChange({ ...content, images: next });
-                  }}
-                  onBlur={() => void commit(content)}
-                />
-                {canEdit && (
-                  <button
-                    type="button"
-                    className="ghost"
-                    data-tip={TIPS.removeImage}
-                    onClick={() => {
-                      const next = {
-                        ...content,
-                        images: images.filter((_, j) => j !== i),
-                      };
-                      void commit(next);
-                    }}
-                  >
-                    Remove
-                  </button>
-                )}
-              </figcaption>
-            </figure>
-          ))}
+      <div className={`image-panel stack${solo ? " solo" : ""}`}>
+        <div className={`image-grid${solo ? " solo" : ""}`}>
+          {images.map((img, i) => {
+            const caption = (img.caption || "").trim();
+            return (
+              <figure key={`${img.url.slice(0, 48)}-${i}`} className="image-figure">
+                <div
+                  className="image-frame"
+                  data-tip={caption || undefined}
+                >
+                  <img
+                    src={img.url}
+                    alt={caption || "Image"}
+                    data-tip={caption || undefined}
+                  />
+                </div>
+                <figcaption className="image-caption">
+                  {canEdit ? (
+                    <>
+                      <input
+                        value={img.caption || ""}
+                        placeholder="Caption"
+                        data-tip={TIPS.imageCaption}
+                        onChange={(e) => {
+                          const next = images.slice();
+                          next[i] = { ...img, caption: e.target.value };
+                          onChange({ ...content, images: next });
+                        }}
+                        onBlur={() => void commit(content)}
+                      />
+                      <button
+                        type="button"
+                        className="ghost"
+                        data-tip={TIPS.removeImage}
+                        onClick={() => {
+                          const next = {
+                            ...content,
+                            images: images.filter((_, j) => j !== i),
+                          };
+                          void commit(next);
+                        }}
+                      >
+                        Remove
+                      </button>
+                    </>
+                  ) : (
+                    <span className={caption ? "" : "muted"}>
+                      {caption || "No caption"}
+                    </span>
+                  )}
+                </figcaption>
+              </figure>
+            );
+          })}
         </div>
         {canEdit && (
-          <div className="row" style={{ flexWrap: "wrap" }}>
+          <div className="row image-panel-actions" style={{ flexWrap: "wrap" }}>
             <label className="buttonish" data-tip={TIPS.uploadImage}>
               Upload image
               <input

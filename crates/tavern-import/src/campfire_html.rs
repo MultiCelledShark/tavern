@@ -650,6 +650,10 @@ fn extract_table(html: &str) -> Option<serde_json::Value> {
 }
 
 fn extract_images(html: &str) -> Vec<serde_json::Value> {
+    let fig_caption = Regex::new(
+        r#"(?is)<(?:div|figcaption)[^>]*class="[^"]*image-caption[^"]*"[^>]*>(.*?)</(?:div|figcaption)>"#,
+    )
+    .ok();
     RE_IMG
         .captures_iter(html)
         .filter_map(|cap| {
@@ -657,10 +661,20 @@ fn extract_images(html: &str) -> Vec<serde_json::Value> {
             if url.is_empty() {
                 return None;
             }
-            let caption = cap
+            let mut caption = cap
                 .get(2)
                 .map(|m| html_to_text(m.as_str()))
                 .filter(|s| !s.is_empty());
+            if caption.is_none() {
+                if let Some(re) = &fig_caption {
+                    if let Some(c) = re.captures(html) {
+                        let t = html_to_text(c.get(1).map(|m| m.as_str()).unwrap_or(""));
+                        if !t.is_empty() {
+                            caption = Some(t);
+                        }
+                    }
+                }
+            }
             Some(if let Some(c) = caption {
                 serde_json::json!({ "url": url, "caption": c })
             } else {
