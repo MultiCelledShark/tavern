@@ -180,9 +180,7 @@ fn split_export_items(html: &str) -> Vec<(&str, &str)> {
         let content_end = starts.get(i + 1).copied().unwrap_or(html.len());
         let mut chunk = &html[content_start..content_end];
         if let Some(idx) = chunk.rfind("</section>") {
-            if i + 1 < starts.len() {
-                chunk = &chunk[..idx];
-            }
+            chunk = &chunk[..idx];
         }
         out.push((item_tag, chunk));
     }

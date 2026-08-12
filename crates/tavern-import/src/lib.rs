@@ -100,10 +100,11 @@ fn looks_like_json(bytes: &[u8]) -> bool {
         .skip_while(|b| b.is_ascii_whitespace())
         .copied()
         .next();
-    matches!(trimmed, Some(b'{') | Some(b'['))
+    matches!(trimmed, Some(b'{'))
 }
 
 fn load_zip(bytes: &[u8], filename: Option<&str>) -> Result<(IntermediateProject, ImportReport)> {
+    const MAX_ENTRY: u64 = 32 * 1024 * 1024;
     let cursor = Cursor::new(bytes);
     let mut archive = zip::ZipArchive::new(cursor).context("open zip backup")?;
     let mut notes = vec![format!(
@@ -121,6 +122,9 @@ fn load_zip(bytes: &[u8], filename: Option<&str>) -> Result<(IntermediateProject
         "export.json",
     ] {
         if let Ok(mut f) = archive.by_name(candidate) {
+            if f.size() > MAX_ENTRY {
+                anyhow::bail!("zip entry {candidate} too large");
+            }
             let mut buf = String::new();
             f.read_to_string(&mut buf)?;
             if let Ok(project) = serde_json::from_str::<IntermediateProject>(&buf) {
@@ -171,6 +175,10 @@ fn load_zip(bytes: &[u8], filename: Option<&str>) -> Result<(IntermediateProject
         let Ok(mut f) = archive.by_name(name) else {
             continue;
         };
+        if f.size() > MAX_ENTRY {
+            notes.push(format!("Skipped oversized entry {name}"));
+            continue;
+        }
         let mut buf = String::new();
         if f.read_to_string(&mut buf).is_err() {
             continue;

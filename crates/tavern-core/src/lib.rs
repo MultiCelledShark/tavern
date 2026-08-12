@@ -19,7 +19,7 @@ impl Default for Config {
             listen: "0.0.0.0:8084".into(),
             data_dir: PathBuf::from("./data"),
             admin_username: "tavern_admin".into(),
-            admin_password: "change-me-to-a-strong-password".into(),
+            admin_password: "replace-with-a-long-secret".into(),
             cookie_secure: false,
             trust_proxy: false,
         }

@@ -27,7 +27,9 @@ impl Db {
         let url = format!("sqlite://{}?mode=rwc", db_path.display());
         let options = SqliteConnectOptions::from_str(&url)?
             .create_if_missing(true)
-            .foreign_keys(true);
+            .foreign_keys(true)
+            .journal_mode(sqlx::sqlite::SqliteJournalMode::Wal)
+            .busy_timeout(std::time::Duration::from_secs(5));
         let pool = SqlitePoolOptions::new()
             .max_connections(8)
             .connect_with(options)
@@ -72,13 +74,13 @@ impl Db {
     }
 
     pub fn validate_password_strength(password: &str) -> Result<()> {
-        if password == "admin" || password == "change-me-to-a-strong-password" {
-            // allow bootstrap default only if long enough for first boot docs;
-            // operators should change it — warn elsewhere
-        }
-        if password == "admin" {
+        if password == "admin"
+            || password == "change-me-to-a-strong-password"
+            || password == "replace-with-a-long-secret"
+        {
             return Err(anyhow!(
-                "refusing default password 'admin'; set a strong TAVERN_ADMIN_PASS"
+                "refusing insecure default password; set a strong TAVERN_ADMIN_PASS (≥{} chars)",
+                Self::MIN_PASSWORD_LEN
             ));
         }
         if password.len() < Self::MIN_PASSWORD_LEN {
@@ -286,6 +288,10 @@ impl Db {
         title: &str,
         synopsis: &str,
     ) -> Result<Project> {
+        let title = title.trim();
+        if title.is_empty() {
+            return Err(anyhow!("title required"));
+        }
         let id = Uuid::new_v4();
         let now = Utc::now();
         let theme = default_theme().to_string();
@@ -426,6 +432,24 @@ impl Db {
         Ok(())
     }
 
+    async fn assert_parent_in_project(
+        &self,
+        project_id: Uuid,
+        parent_id: Option<Uuid>,
+    ) -> Result<()> {
+        let Some(pid) = parent_id else {
+            return Ok(());
+        };
+        let parent = self
+            .get_element(pid)
+            .await?
+            .ok_or_else(|| anyhow!("parent element not found"))?;
+        if parent.project_id != project_id {
+            return Err(anyhow!("parent element must belong to the same project"));
+        }
+        Ok(())
+    }
+
     pub async fn create_element(
         &self,
         project_id: Uuid,
@@ -435,6 +459,11 @@ impl Db {
         metadata: serde_json::Value,
         apply_default_template: bool,
     ) -> Result<Element> {
+        let title = title.trim();
+        if title.is_empty() {
+            return Err(anyhow!("title required"));
+        }
+        self.assert_parent_in_project(project_id, parent_id).await?;
         let id = Uuid::new_v4();
         let now = Utc::now();
         let sort = self.next_element_sort(project_id, module_type).await?;
@@ -573,11 +602,17 @@ impl Db {
         sort_order: i64,
         metadata: serde_json::Value,
     ) -> Result<Element> {
+        let title = title.trim();
+        if title.is_empty() {
+            return Err(anyhow!("title required"));
+        }
         let now = Utc::now();
         let el = self
             .get_element(id)
             .await?
             .ok_or_else(|| anyhow!("element not found"))?;
+        self.assert_parent_in_project(el.project_id, parent_id)
+            .await?;
         sqlx::query(
             "UPDATE elements SET title = ?, parent_id = ?, sort_order = ?, metadata = ?, updated_at = ? WHERE id = ?",
         )
@@ -786,6 +821,17 @@ impl Db {
         link_type: &str,
         metadata: serde_json::Value,
     ) -> Result<ElementLink> {
+        let from = self
+            .get_element(from_element_id)
+            .await?
+            .ok_or_else(|| anyhow!("from element not found"))?;
+        let to = self
+            .get_element(to_element_id)
+            .await?
+            .ok_or_else(|| anyhow!("to element not found"))?;
+        if from.project_id != project_id || to.project_id != project_id {
+            return Err(anyhow!("link endpoints must belong to the same project"));
+        }
         let id = Uuid::new_v4();
         sqlx::query(
             "INSERT INTO element_links (id, project_id, from_element_id, to_element_id, label, link_type, metadata)
@@ -809,6 +855,17 @@ impl Db {
             link_type: link_type.to_string(),
             metadata,
         })
+    }
+
+    pub async fn get_link(&self, id: Uuid) -> Result<Option<ElementLink>> {
+        let row = sqlx::query(
+            "SELECT id, project_id, from_element_id, to_element_id, label, link_type, metadata
+             FROM element_links WHERE id = ?",
+        )
+        .bind(id.to_string())
+        .fetch_optional(&self.pool)
+        .await?;
+        Ok(row.map(map_link))
     }
 
     pub async fn list_links(&self, project_id: Uuid) -> Result<Vec<ElementLink>> {
@@ -868,7 +925,7 @@ impl Db {
         Ok(())
     }
 
-    /// Rewrite `[[Module:old_title]]` tokens across every manuscript in a project.
+    /// Rewrite `[[Module:old_title]]` tokens across manuscripts and panel content in a project.
     pub async fn rewrite_wikilinks_in_project(
         &self,
         project_id: Uuid,
@@ -881,7 +938,10 @@ impl Db {
         if old_title == new_title || old_title.is_empty() {
             return Ok(0);
         }
-        let rows = sqlx::query(
+        let mut updated = 0usize;
+        let now = Utc::now().to_rfc3339();
+
+        let ms_rows = sqlx::query(
             "SELECT mb.element_id AS element_id, mb.markdown AS markdown, mb.word_goal AS word_goal
              FROM manuscript_bodies mb
              INNER JOIN elements e ON e.id = mb.element_id
@@ -891,9 +951,7 @@ impl Db {
         .fetch_all(&self.pool)
         .await?;
 
-        let mut updated = 0usize;
-        let now = Utc::now().to_rfc3339();
-        for row in rows {
+        for row in ms_rows {
             let element_id: String = row.get("element_id");
             let markdown: String = row.get("markdown");
             let word_goal: i64 = row.get("word_goal");
@@ -912,6 +970,34 @@ impl Db {
             .await?;
             updated += 1;
         }
+
+        // Panel JSON may embed wikilink tokens in markdown / text fields.
+        let panel_rows = sqlx::query(
+            "SELECT p.id AS id, p.content_json AS content_json
+             FROM panels p
+             INNER JOIN pages pg ON pg.id = p.page_id
+             INNER JOIN elements e ON e.id = pg.element_id
+             WHERE e.project_id = ?",
+        )
+        .bind(project_id.to_string())
+        .fetch_all(&self.pool)
+        .await?;
+
+        for row in panel_rows {
+            let panel_id: String = row.get("id");
+            let content: String = row.get("content_json");
+            let next = rewrite_wikilinks(&content, module, old_title, new_title);
+            if next == content {
+                continue;
+            }
+            sqlx::query("UPDATE panels SET content_json = ? WHERE id = ?")
+                .bind(&next)
+                .bind(&panel_id)
+                .execute(&self.pool)
+                .await?;
+            updated += 1;
+        }
+
         if updated > 0 {
             self.touch_project(project_id).await?;
         }
@@ -988,6 +1074,20 @@ impl Db {
             .execute(&self.pool)
             .await?;
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod password_tests {
+    use super::Db;
+
+    #[test]
+    fn rejects_insecure_defaults() {
+        assert!(Db::validate_password_strength("admin").is_err());
+        assert!(Db::validate_password_strength("change-me-to-a-strong-password").is_err());
+        assert!(Db::validate_password_strength("replace-with-a-long-secret").is_err());
+        assert!(Db::validate_password_strength("short").is_err());
+        assert!(Db::validate_password_strength("a-reasonable-passphrase").is_ok());
     }
 }
 

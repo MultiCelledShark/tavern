@@ -44,23 +44,45 @@ export default function PanelCanvas({
   const [title, setTitle] = useState(element.title);
   const [width, setWidth] = useState(900);
   const canvasRef = useRef<HTMLDivElement>(null);
+  const panelsRef = useRef(panels);
+  panelsRef.current = panels;
+  const creatingPageRef = useRef(false);
 
   useEffect(() => {
     setTitle(element.title);
+    let cancelled = false;
+    creatingPageRef.current = false;
     (async () => {
       let list = await api.pages(element.id);
+      if (cancelled) return;
       if (!list.length) {
-        await api.createPage(element.id, "Overview");
-        list = await api.pages(element.id);
+        if (creatingPageRef.current) return;
+        creatingPageRef.current = true;
+        try {
+          await api.createPage(element.id, "Overview");
+          list = await api.pages(element.id);
+        } finally {
+          creatingPageRef.current = false;
+        }
       }
+      if (cancelled) return;
       setPages(list);
       setPageId(list[0]?.id || null);
     })();
+    return () => {
+      cancelled = true;
+    };
   }, [element.id]);
 
   useEffect(() => {
     if (!pageId) return;
-    api.panels(pageId).then(setPanels);
+    let cancelled = false;
+    api.panels(pageId).then((list) => {
+      if (!cancelled) setPanels(list);
+    });
+    return () => {
+      cancelled = true;
+    };
   }, [pageId]);
 
   useEffect(() => {
@@ -92,6 +114,7 @@ export default function PanelCanvas({
 
   async function persistLayout(next: GridItem[]) {
     const byId = new Map(next.map((item) => [item.i, item]));
+    const snapshot = panelsRef.current;
     setPanels((all) =>
       all.map((p) => {
         const item = byId.get(p.id);
@@ -102,7 +125,7 @@ export default function PanelCanvas({
         };
       })
     );
-    for (const panel of panels) {
+    for (const panel of snapshot) {
       const item = byId.get(panel.id);
       if (!item) continue;
       const same =
@@ -236,7 +259,11 @@ export default function PanelCanvas({
                     e.target.style.height = "auto";
                     e.target.style.height = `${Math.max(e.target.scrollHeight, 22)}px`;
                   }}
-                  onBlur={() => persistPanel(panel, { title: panel.title })}
+                  onBlur={(e) =>
+                    void persistPanel(panel, {
+                      title: e.target.value.replace(/\n/g, " "),
+                    })
+                  }
                   onKeyDown={(e) => {
                     if (e.key === "Enter") {
                       e.preventDefault();
@@ -280,7 +307,8 @@ export default function PanelCanvas({
                     setPanels((all) =>
                       all.map((p) => (p.id === panel.id ? { ...p, content } : p))
                     );
-                    return persistPanel(panel, { content });
+                    const latest = panelsRef.current.find((p) => p.id === panel.id) || panel;
+                    return persistPanel(latest, { content });
                   }}
                 />
               </div>
@@ -326,13 +354,24 @@ function PanelEditor({
   commit: (c: Record<string, unknown>) => void | Promise<void>;
 }) {
   const content = panel.content;
+  const draftRef = useRef(content);
+  draftRef.current = content;
+
+  function setDraft(next: Record<string, unknown>) {
+    draftRef.current = next;
+    onChange(next);
+  }
+
+  function commitDraft() {
+    return commit(draftRef.current);
+  }
 
   if (panel.panel_type === "text") {
     return (
       <textarea
         value={String(content.markdown || "")}
-        onChange={(e) => onChange({ ...content, markdown: e.target.value })}
-        onBlur={() => void commit({ ...content, markdown: String(content.markdown || "") })}
+        onChange={(e) => setDraft({ ...draftRef.current, markdown: e.target.value })}
+        onBlur={() => void commitDraft()}
         placeholder="Write markdown…"
         disabled={!canEdit}
         data-tip={TIPS.panelText}
@@ -351,28 +390,32 @@ function PanelEditor({
               value={item.key}
               disabled={!canEdit}
               onChange={(e) => {
-                const next = items.slice();
-                next[i] = { ...item, key: e.target.value };
-                onChange({ ...content, items: next });
+                const cur = (draftRef.current.items as { key: string; value: string }[]) || items;
+                const next = cur.slice();
+                next[i] = { ...next[i], key: e.target.value };
+                setDraft({ ...draftRef.current, items: next });
               }}
-              onBlur={() => void commit(content)}
+              onBlur={() => void commitDraft()}
             />
             <input
               placeholder="Value"
               value={item.value}
               disabled={!canEdit}
               onChange={(e) => {
-                const next = items.slice();
-                next[i] = { ...item, value: e.target.value };
-                onChange({ ...content, items: next });
+                const cur = (draftRef.current.items as { key: string; value: string }[]) || items;
+                const next = cur.slice();
+                next[i] = { ...next[i], value: e.target.value };
+                setDraft({ ...draftRef.current, items: next });
               }}
-              onBlur={() => void commit(content)}
+              onBlur={() => void commitDraft()}
             />
             {canEdit && (
               <button
                 type="button"
                 onClick={() => {
-                  const next = { ...content, items: items.filter((_, j) => j !== i) };
+                  const cur = (draftRef.current.items as { key: string; value: string }[]) || items;
+                  const next = { ...draftRef.current, items: cur.filter((_, j) => j !== i) };
+                  draftRef.current = next;
                   void commit(next);
                 }}
               >
@@ -386,7 +429,12 @@ function PanelEditor({
             type="button"
             data-tip={TIPS.addAttrRow}
             onClick={() => {
-              const next = { ...content, items: [...items, { key: "", value: "" }] };
+              const cur = (draftRef.current.items as { key: string; value: string }[]) || items;
+              const next = {
+                ...draftRef.current,
+                items: [...cur, { key: "", value: "" }],
+              };
+              draftRef.current = next;
               void commit(next);
             }}
           >
@@ -407,18 +455,21 @@ function PanelEditor({
               value={item}
               disabled={!canEdit}
               onChange={(e) => {
-                const next = items.slice();
+                const cur = (draftRef.current.items as string[]) || items;
+                const next = cur.slice();
                 next[i] = e.target.value;
-                onChange({ ...content, items: next });
+                setDraft({ ...draftRef.current, items: next });
               }}
-              onBlur={() => void commit(content)}
+              onBlur={() => void commitDraft()}
               style={{ gridColumn: "1 / 3" }}
             />
             {canEdit && (
               <button
                 type="button"
                 onClick={() => {
-                  const next = { ...content, items: items.filter((_, j) => j !== i) };
+                  const cur = (draftRef.current.items as string[]) || items;
+                  const next = { ...draftRef.current, items: cur.filter((_, j) => j !== i) };
+                  draftRef.current = next;
                   void commit(next);
                 }}
               >
@@ -432,7 +483,9 @@ function PanelEditor({
             type="button"
             data-tip={TIPS.addListItem}
             onClick={() => {
-              const next = { ...content, items: [...items, ""] };
+              const cur = (draftRef.current.items as string[]) || items;
+              const next = { ...draftRef.current, items: [...cur, ""] };
+              draftRef.current = next;
               void commit(next);
             }}
           >
@@ -455,11 +508,12 @@ function PanelEditor({
               value={h}
               disabled={!canEdit}
               onChange={(e) => {
-                const next = headers.slice();
+                const cur = (draftRef.current.headers as string[]) || headers;
+                const next = cur.slice();
                 next[i] = e.target.value;
-                onChange({ ...content, headers: next });
+                setDraft({ ...draftRef.current, headers: next });
               }}
-              onBlur={() => void commit(content)}
+              onBlur={() => void commitDraft()}
             />
           ))}
         </div>
@@ -471,11 +525,11 @@ function PanelEditor({
                 value={cell}
                 disabled={!canEdit}
                 onChange={(e) => {
-                  const next = rows.map((r) => r.slice());
-                  next[ri][ci] = e.target.value;
-                  onChange({ ...content, rows: next });
+                  const cur = ((draftRef.current.rows as string[][]) || rows).map((r) => r.slice());
+                  cur[ri][ci] = e.target.value;
+                  setDraft({ ...draftRef.current, rows: cur });
                 }}
-                onBlur={() => void commit(content)}
+                onBlur={() => void commitDraft()}
               />
             ))}
           </div>
@@ -485,10 +539,13 @@ function PanelEditor({
             type="button"
             data-tip={TIPS.addTableRow}
             onClick={() => {
+              const hdrs = (draftRef.current.headers as string[]) || headers;
+              const cur = (draftRef.current.rows as string[][]) || rows;
               const next = {
-                ...content,
-                rows: [...rows, headers.map(() => "")],
+                ...draftRef.current,
+                rows: [...cur, hdrs.map(() => "")],
               };
+              draftRef.current = next;
               void commit(next);
             }}
           >
@@ -518,15 +575,15 @@ function PanelEditor({
         disabled={!canEdit}
         data-tip={TIPS.panelLinks}
         onChange={(e) =>
-          onChange({
-            ...content,
+          setDraft({
+            ...draftRef.current,
             element_ids: e.target.value
               .split("\n")
               .map((s) => s.trim())
               .filter(Boolean),
           })
         }
-        onBlur={() => void commit(content)}
+        onBlur={() => void commitDraft()}
         placeholder="One element id per line"
       />
     );
@@ -538,12 +595,12 @@ function PanelEditor({
       disabled={!canEdit}
       onChange={(e) => {
         try {
-          onChange(JSON.parse(e.target.value));
+          setDraft(JSON.parse(e.target.value));
         } catch {
           /* ignore */
         }
       }}
-      onBlur={() => void commit(content)}
+      onBlur={() => void commitDraft()}
     />
   );
 }
@@ -591,9 +648,19 @@ function ImagePanelEditor({
                         onChange={(e) => {
                           const next = images.slice();
                           next[i] = { ...img, caption: e.target.value };
-                          onChange({ ...content, images: next });
+                          const payload = { ...content, images: next };
+                          onChange(payload);
+                          // Keep caption draft for blur even if parent hasn't re-rendered.
+                          (e.target as HTMLInputElement).dataset.draft = e.target.value;
                         }}
-                        onBlur={() => void commit(content)}
+                        onBlur={(e) => {
+                          const next = images.slice();
+                          next[i] = {
+                            ...img,
+                            caption: e.target.value,
+                          };
+                          void commit({ ...content, images: next });
+                        }}
                       />
                       <button
                         type="button"
@@ -626,7 +693,7 @@ function ImagePanelEditor({
               Upload image
               <input
                 type="file"
-                accept="image/png,image/jpeg,image/webp,image/gif,image/svg+xml"
+                accept="image/png,image/jpeg,image/webp,image/gif"
                 hidden
                 onChange={async (e) => {
                   const file = e.target.files?.[0];

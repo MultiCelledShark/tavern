@@ -425,7 +425,7 @@ export default function ProjectWorkspace({
               e.dataTransfer.dropEffect = "move";
               if (dragModuleRef.current && dragModuleRef.current !== m.id) {
                 moduleDidDragRef.current = true;
-                setOverModule(m.id);
+                setOverModule((cur) => (cur === m.id ? cur : m.id));
               }
             }}
             onDragLeave={() => {

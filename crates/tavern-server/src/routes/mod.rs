@@ -653,8 +653,12 @@ async fn delete_link(
     State(state): State<Arc<AppState>>,
     Path(id): Path<Uuid>,
 ) -> Result<StatusCode, ApiError> {
-    // look up link via scanning is heavy; require auth and delete
-    let _ = user;
+    let link = state
+        .db
+        .get_link(id)
+        .await?
+        .ok_or(ApiError::not_found("link"))?;
+    require_edit(&state, &user, link.project_id).await?;
     state.db.delete_link(id).await?;
     Ok(StatusCode::NO_CONTENT)
 }
@@ -916,9 +920,10 @@ fn safe_asset_name(original: &str) -> Result<String, ApiError> {
         .and_then(|e| e.to_str())
         .unwrap_or("bin")
         .to_ascii_lowercase();
-    let allowed = ["png", "jpg", "jpeg", "webp", "gif", "svg"];
+    // SVG omitted: served inline it becomes same-origin scriptable XSS.
+    let allowed = ["png", "jpg", "jpeg", "webp", "gif"];
     if !allowed.contains(&ext.as_str()) {
-        return Err(ApiError::bad("only image uploads (png/jpg/webp/gif/svg)"));
+        return Err(ApiError::bad("only image uploads (png/jpg/webp/gif)"));
     }
     Ok(format!("{}.{}", Uuid::new_v4(), ext))
 }
@@ -1010,7 +1015,16 @@ async fn get_asset(
     let mime = mime_guess::from_path(&path)
         .first_or_octet_stream()
         .to_string();
-    Ok(([(header::CONTENT_TYPE, mime)], bytes).into_response())
+    // Refuse to serve leftover SVGs as navigable documents (XSS).
+    if mime.starts_with("image/svg") || name.to_ascii_lowercase().ends_with(".svg") {
+        return Err(ApiError::bad("svg assets are disabled"));
+    }
+    let mut res = ([(header::CONTENT_TYPE, mime)], bytes).into_response();
+    res.headers_mut().insert(
+        header::HeaderName::from_static("x-content-type-options"),
+        header::HeaderValue::from_static("nosniff"),
+    );
+    Ok(res)
 }
 
 async fn delete_asset(
@@ -1392,27 +1406,50 @@ impl ApiError {
 
 impl From<anyhow::Error> for ApiError {
     fn from(e: anyhow::Error) -> Self {
+        let msg = e.to_string();
+        let lower = msg.to_ascii_lowercase();
+        // Validation-style errors from the DB layer should stay 400 with the message.
+        if lower.contains("title required")
+            || lower.contains("must belong")
+            || lower.contains("not found")
+            || lower.contains("refusing")
+            || lower.contains("password must")
+            || lower.contains("elements must")
+            || lower.contains("parent element")
+        {
+            return Self {
+                status: if lower.contains("not found") {
+                    StatusCode::NOT_FOUND
+                } else {
+                    StatusCode::BAD_REQUEST
+                },
+                message: msg,
+            };
+        }
+        tracing::error!(error = %e, "internal error");
         Self {
             status: StatusCode::INTERNAL_SERVER_ERROR,
-            message: e.to_string(),
+            message: "internal error".into(),
         }
     }
 }
 
 impl From<sqlx::Error> for ApiError {
     fn from(e: sqlx::Error) -> Self {
+        tracing::error!(error = %e, "database error");
         Self {
             status: StatusCode::INTERNAL_SERVER_ERROR,
-            message: e.to_string(),
+            message: "database error".into(),
         }
     }
 }
 
 impl From<std::io::Error> for ApiError {
     fn from(e: std::io::Error) -> Self {
+        tracing::error!(error = %e, "io error");
         Self {
             status: StatusCode::INTERNAL_SERVER_ERROR,
-            message: e.to_string(),
+            message: "io error".into(),
         }
     }
 }

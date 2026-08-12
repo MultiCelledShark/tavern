@@ -20,9 +20,12 @@ export default function ManuscriptEditor({
   const [wordCount, setWordCount] = useState(0);
   const [sourceMode, setSourceMode] = useState(false);
   const [saved, setSaved] = useState(true);
+  const [error, setError] = useState<string | null>(null);
   const wysiwygRef = useRef<HTMLDivElement | null>(null);
   const titleByIdRef = useRef<Map<string, { module_type: ModuleType; title: string }>>(new Map());
   const loadedIdRef = useRef<string | null>(null);
+  const sourceModeRef = useRef(sourceMode);
+  sourceModeRef.current = sourceMode;
 
   function setWysiwygHtml(html: string) {
     const el = wysiwygRef.current;
@@ -45,21 +48,31 @@ export default function ManuscriptEditor({
   useEffect(() => {
     setTitle(element.title);
     loadedIdRef.current = null;
+    let cancelled = false;
+    let raf = 0;
     (async () => {
-      const body = await api.manuscript(element.id);
-      setMarkdown(body.markdown);
-      setWordGoal(body.word_goal);
-      setWordCount(body.word_count);
-      loadedIdRef.current = element.id;
-      // Apply HTML after paint so the contentEditable node exists when not in source mode.
-      requestAnimationFrame(() => {
-        if (!sourceMode) {
+      try {
+        const body = await api.manuscript(element.id);
+        if (cancelled) return;
+        setMarkdown(body.markdown);
+        setWordGoal(body.word_goal);
+        setWordCount(body.word_count);
+        loadedIdRef.current = element.id;
+        raf = requestAnimationFrame(() => {
+          if (cancelled || sourceModeRef.current) return;
           setWysiwygHtml(markdownToSimpleHtml(body.markdown));
-        }
-      });
-      setSaved(true);
+        });
+        setSaved(true);
+        setError(null);
+      } catch (e) {
+        if (!cancelled) setError(e instanceof Error ? e.message : "Failed to load manuscript");
+      }
     })();
-  }, [element.id]); // eslint-disable-line react-hooks/exhaustive-deps
+    return () => {
+      cancelled = true;
+      if (raf) cancelAnimationFrame(raf);
+    };
+  }, [element.id]);
 
   // When leaving source mode, push markdown into the contentEditable surface.
   useEffect(() => {
@@ -103,23 +116,33 @@ export default function ManuscriptEditor({
       });
       return;
     }
-    const html = readWysiwygHtml();
-    const updated = apply(html);
-    if (updated !== html) {
-      setWysiwygHtml(updated);
-      setMarkdown(updated);
-      setWordCount(countWords(readWysiwygText()));
-      setSaved(false);
-    }
+    // Rewrite the markdown source of truth, then re-render WYSIWYG (never store HTML in markdown).
+    setMarkdown((m) => {
+      const fromDom = htmlToMarkdown(readWysiwygHtml() || m);
+      const base = fromDom || m;
+      const updated = apply(base);
+      if (updated !== base) {
+        setWysiwygHtml(markdownToSimpleHtml(updated));
+        setWordCount(countWords(updated));
+        setSaved(false);
+        return updated;
+      }
+      return m;
+    });
   }, [allElements, sourceMode]);
 
   async function save() {
-    const md = sourceMode ? markdown : htmlToMarkdown(readWysiwygHtml() || markdown);
-    const res = await api.saveManuscript(element.id, md, wordGoal);
-    setMarkdown(res.markdown);
-    setWordCount(res.word_count);
-    if (!sourceMode) setWysiwygHtml(markdownToSimpleHtml(res.markdown));
-    setSaved(true);
+    try {
+      const md = sourceMode ? markdown : htmlToMarkdown(readWysiwygHtml() || markdown);
+      const res = await api.saveManuscript(element.id, md, wordGoal);
+      setMarkdown(res.markdown);
+      setWordCount(res.word_count);
+      if (!sourceMode) setWysiwygHtml(markdownToSimpleHtml(res.markdown));
+      setSaved(true);
+      setError(null);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Save failed");
+    }
   }
 
   function toggleSource() {
@@ -135,8 +158,11 @@ export default function ManuscriptEditor({
 
   function insertToken(token: string) {
     if (sourceMode) {
-      setMarkdown((m) => m + token);
-      setWordCount((c) => c + countWords(token));
+      setMarkdown((m) => {
+        const next = m + token;
+        setWordCount(countWords(next));
+        return next;
+      });
       setSaved(false);
       return;
     }
@@ -154,7 +180,8 @@ export default function ManuscriptEditor({
     } else {
       root.appendChild(document.createTextNode(token));
     }
-    setMarkdown(readWysiwygHtml());
+    const md = htmlToMarkdown(readWysiwygHtml());
+    setMarkdown(md);
     setWordCount(countWords(readWysiwygText()));
     setSaved(false);
   }
@@ -198,13 +225,15 @@ export default function ManuscriptEditor({
           {wordCount}
           {wordGoal ? ` / ${wordGoal}` : ""} words
         </span>
-        <button className="primary" data-tip={TIPS.msSave} onClick={save}>
+        <button className="primary" data-tip={TIPS.msSave} onClick={() => void save()}>
           {saved ? "Saved" : "Save"}
         </button>
         {!focusMode && (
           <TipHint tip={TIPS.msEditor} label="Manuscript writing tips" />
         )}
       </div>
+
+      {error && <p className="error">{error}</p>}
 
       {sourceMode ? (
         <textarea
@@ -228,9 +257,14 @@ export default function ManuscriptEditor({
           aria-label="Manuscript body"
           data-placeholder="Start writing your chapter…"
           onInput={() => {
-            setMarkdown(readWysiwygHtml());
+            setMarkdown(htmlToMarkdown(readWysiwygHtml()));
             setWordCount(countWords(readWysiwygText()));
             setSaved(false);
+          }}
+          onPaste={(e) => {
+            e.preventDefault();
+            const text = e.clipboardData.getData("text/plain");
+            document.execCommand("insertText", false, text);
           }}
         />
       )}
@@ -276,20 +310,29 @@ function rewriteWikilinks(
   return out;
 }
 
+function escapeHtml(s: string): string {
+  return s
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;");
+}
+
 function markdownToSimpleHtml(md: string): string {
   if (!md.trim()) return "";
-  if (md.trim().startsWith("<")) return md;
+  // Escape first so imported/pasted HTML never becomes executable markup.
   return md
     .split(/\n\n+/)
     .map((para) => {
-      const line = para
+      const escaped = escapeHtml(para);
+      const line = escaped
         .replace(/^### (.*)$/gm, "<h3>$1</h3>")
         .replace(/^## (.*)$/gm, "<h2>$1</h2>")
         .replace(/^# (.*)$/gm, "<h1>$1</h1>")
         .replace(/\*\*(.+?)\*\*/g, "<strong>$1</strong>")
         .replace(/\*(.+?)\*/g, "<em>$1</em>")
         .replace(/\n/g, "<br/>");
-      if (line.startsWith("<h")) return line;
+      if (/^<h[1-3]>/.test(line)) return line;
       return `<p>${line}</p>`;
     })
     .join("");
@@ -314,5 +357,6 @@ function htmlToMarkdown(html: string): string {
     .replace(/&amp;/g, "&")
     .replace(/&lt;/g, "<")
     .replace(/&gt;/g, ">")
+    .replace(/&quot;/g, '"')
     .trim();
 }

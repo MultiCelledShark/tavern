@@ -2,6 +2,7 @@ import {
   Children,
   isValidElement,
   useCallback,
+  useEffect,
   useMemo,
   useRef,
   useState,
@@ -218,6 +219,15 @@ export default function PanelGrid({
     },
     [finish, onPointerMove, width, cols, margin, rowHeight]
   );
+
+  // Drop window listeners if the grid unmounts mid-drag.
+  useEffect(() => {
+    return () => {
+      window.removeEventListener("pointermove", onPointerMove);
+      window.removeEventListener("pointerup", onPointerUp);
+      window.removeEventListener("pointercancel", onPointerUp);
+    };
+  }, [onPointerMove, onPointerUp]);
 
   function begin(
     e: ReactPointerEvent,

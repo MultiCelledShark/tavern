@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { api, Element } from "../api/client";
 import PanelCanvas from "./PanelCanvas";
 import { TIPS } from "../tips";
@@ -33,6 +33,16 @@ export default function TimelineView({
   const [labelDraft, setLabelDraft] = useState(() =>
     selected ? String(selected.metadata.date_label || "") : ""
   );
+
+  useEffect(() => {
+    if (!selected) {
+      setDateDraft("");
+      setLabelDraft("");
+      return;
+    }
+    setDateDraft(eventDate(selected));
+    setLabelDraft(String(selected.metadata.date_label || ""));
+  }, [selectedId, selected]);
 
   const ordered = useMemo(() => {
     return [...elements].sort((a, b) => {

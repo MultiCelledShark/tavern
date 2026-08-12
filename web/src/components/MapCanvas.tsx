@@ -53,7 +53,10 @@ export default function MapCanvas({
     setTitle(element.title);
     setBg(String(element.metadata.background_url || ""));
     setPins(readPins(element.metadata));
-  }, [element.id, element.title, element.metadata]);
+  }, [element.id]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const pinsRef = useRef(pins);
+  pinsRef.current = pins;
 
   const selectedPin = useMemo(
     () => pins.find((p) => p.id === selected) || null,
@@ -134,7 +137,7 @@ export default function MapCanvas({
             {bg ? "Replace map image" : "Upload map image"}
             <input
               type="file"
-              accept="image/png,image/jpeg,image/webp,image/gif,image/svg+xml"
+              accept="image/png,image/jpeg,image/webp,image/gif"
               hidden
               onChange={(e) => onUpload(e.target.files?.[0] || null)}
             />
@@ -188,7 +191,7 @@ export default function MapCanvas({
               );
               setPins(next);
             }}
-            onBlur={() => void persist(title, bg, pins)}
+            onBlur={() => void persist(title, bg, pinsRef.current)}
           />
           <select
             value={selectedPin.element_id || ""}
