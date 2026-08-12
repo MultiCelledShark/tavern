@@ -1,10 +1,8 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import GridLayout, { Layout } from "react-grid-layout";
-import "react-grid-layout/css/styles.css";
-import "react-resizable/css/styles.css";
 import { api, Element, Page, Panel } from "../api/client";
 import { TIPS } from "../tips";
 import ImageLightbox from "./ImageLightbox";
+import PanelGrid, { type GridItem } from "./PanelGrid";
 
 const PANEL_TYPES = [
   "attributes",
@@ -75,7 +73,7 @@ export default function PanelCanvas({
     return () => ro.disconnect();
   }, []);
 
-  const layout: Layout[] = useMemo(
+  const layout: GridItem[] = useMemo(
     () =>
       panels.map((p) => {
         const mins = PANEL_MIN[p.panel_type] || { minW: 3, minH: 4 };
@@ -91,6 +89,37 @@ export default function PanelCanvas({
       }),
     [panels]
   );
+
+  async function persistLayout(next: GridItem[]) {
+    const byId = new Map(next.map((item) => [item.i, item]));
+    setPanels((all) =>
+      all.map((p) => {
+        const item = byId.get(p.id);
+        if (!item) return p;
+        return {
+          ...p,
+          layout: { x: item.x, y: item.y, w: item.w, h: item.h },
+        };
+      })
+    );
+    for (const panel of panels) {
+      const item = byId.get(panel.id);
+      if (!item) continue;
+      const same =
+        panel.layout.x === item.x &&
+        panel.layout.y === item.y &&
+        panel.layout.w === item.w &&
+        panel.layout.h === item.h;
+      if (same) continue;
+      await api.updatePanel(panel.id, {
+        title: panel.title,
+        border_color: panel.border_color,
+        layout: { x: item.x, y: item.y, w: item.w, h: item.h },
+        content: panel.content,
+        sort_order: panel.sort_order,
+      });
+    }
+  }
 
   async function persistPanel(panel: Panel, patch: Partial<Panel>) {
     const next = { ...panel, ...patch };
@@ -170,34 +199,26 @@ export default function PanelCanvas({
       </div>
 
       <div className="panel-canvas" ref={canvasRef}>
-        <GridLayout
-          className="layout"
+        <PanelGrid
           layout={layout}
           cols={12}
           rowHeight={36}
           width={width}
           draggableHandle=".drag-handle"
-          onDragStop={async (l) => {
-            for (const item of l) {
-              const panel = panels.find((p) => p.id === item.i);
-              if (!panel) continue;
-              await persistPanel(panel, {
-                layout: { x: item.x, y: item.y, w: item.w, h: item.h },
-              });
-            }
+          editable={canEdit}
+          onDragStop={(l) => {
+            void persistLayout(l);
           }}
-          onResizeStop={async (l) => {
-            for (const item of l) {
-              const panel = panels.find((p) => p.id === item.i);
-              if (!panel) continue;
-              await persistPanel(panel, {
-                layout: { x: item.x, y: item.y, w: item.w, h: item.h },
-              });
-            }
+          onResizeStop={(l) => {
+            void persistLayout(l);
           }}
         >
           {panels.map((panel) => (
-            <div key={panel.id} style={{ borderColor: panel.border_color || undefined }}>
+            <div
+              key={panel.id}
+              className="panel-card"
+              style={{ borderColor: panel.border_color || undefined }}
+            >
               <div className="panel-header">
                 <span className="drag-handle" data-tip={TIPS.panelDrag}>
                   ⠿
@@ -265,7 +286,7 @@ export default function PanelCanvas({
               </div>
             </div>
           ))}
-        </GridLayout>
+        </PanelGrid>
       </div>
     </div>
   );

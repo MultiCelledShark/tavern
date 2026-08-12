@@ -51,12 +51,11 @@ Workspace path crates (`tavern-core`, `tavern-db`, `tavern-import`, `tavern-expo
 
 | Package | Remove in |
 |---|---|
-| `react-grid-layout` | Phase 2 (panel canvas) |
 | `@xyflow/react` | Phase 3 (relationship graph) |
 
 **Dev-only allow:** `vite`, `@vitejs/plugin-react`, `typescript`, `@types/react`, `@types/react-dom`, plus `@types/*` only while a runtime package that needs them remains.
 
-**Hard deny:** `@tiptap/*`, `turndown`, and any new runtime package not listed above.
+**Hard deny:** `@tiptap/*`, `react-grid-layout`, `turndown`, and any new runtime package not listed above.
 
 ### Policy artifacts
 
@@ -89,9 +88,9 @@ Replace TipTap with a small contentEditable / source textarea using existing mar
 
 ### Phase 2 — Panel canvas layout
 
-Replace `react-grid-layout` with CSS grid + pointer drag/resize.
+Replace `react-grid-layout` with CSS/absolute grid + pointer drag/resize (`PanelGrid`).
 
-**Touch:** `PanelCanvas.tsx`  
+**Touch:** `PanelCanvas.tsx`, `PanelGrid.tsx`  
 **Exit:** layout persist; grid-layout gone.
 
 ### Phase 3 — Relationship graph
@@ -122,14 +121,14 @@ Vendoring/mirroring if needed; Renovate only for allowlisted packages; periodic 
 
 ## Baseline counts
 
-Captured during Phase 0→1 on `auto/slim-stack-phase0-1-ecbe` (re-run `scripts/check-dependency-allowlist.sh` for live numbers):
+Captured during Phases 0–2 (re-run `scripts/check-dependency-allowlist.sh` for live numbers):
 
-| Layer | Before Phase 0 | After Phase 1 | Target after Phase 3 |
-|---|---|---|---|
-| Web runtime direct | 11 | **5** | 2–3 |
-| Web lockfile packages | ~223 | **~154** | ~30–60 |
-| Rust direct external | ~26 | **~23** | ~15–18 |
-| Rust transitive | ~250 | ~250 | ~150–200 (tokio/sqlx dominate) |
+| Layer | Before Phase 0 | After Phase 1 | After Phase 2 | Target after Phase 3 |
+|---|---|---|---|---|
+| Web runtime direct | 11 | 5 | **4** | 2–3 |
+| Web lockfile packages | ~223 | ~154 | **~95** | ~30–60 |
+| Rust direct external | ~26 | ~23 | ~23 | ~15–18 |
+| Rust transitive | ~250 | ~250 | ~250 | ~150–200 (tokio/sqlx dominate) |
 
 Meaningful supply-chain shrink is mostly on the **npm** side. Rust stays chunky because tokio/sqlx are deep — that is the accepted trade.
 
@@ -139,4 +138,5 @@ Meaningful supply-chain shrink is mostly on the **npm** side. Rust stays chunky 
 |---|---|
 | 0 Freeze & baseline | done |
 | 1 TipTap → bespoke editor | done |
-| 2–6 | not started |
+| 2 grid-layout → PanelGrid | done |
+| 3–6 | not started |

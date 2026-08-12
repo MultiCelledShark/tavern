@@ -45,19 +45,16 @@
       "react",
       "react-dom",
       "react-router-dom",
-      "react-grid-layout",
       "@xyflow/react"
     ],
     "allowed_devDependencies": [
       "@types/react",
       "@types/react-dom",
-      "@types/react-grid-layout",
       "@vitejs/plugin-react",
       "typescript",
       "vite"
     ],
     "phase_removals": {
-      "2": ["react-grid-layout", "@types/react-grid-layout"],
       "3": ["@xyflow/react"],
       "4": ["react-router-dom"]
     },
@@ -67,6 +64,8 @@
       "@tiptap/pm",
       "@tiptap/react",
       "@tiptap/starter-kit",
+      "react-grid-layout",
+      "@types/react-grid-layout",
       "turndown",
       "@types/turndown"
     ]

@@ -29,5 +29,6 @@
 - [x] Next module batch: Species, Cultures, Items, Arcs, Languages, Religions
 - [x] Module batch: Research, Philosophies, Calendar
 - [x] Slim stack Phases 0–1 (allowlist + TipTap removal) — [SLIM_STACK.md](./SLIM_STACK.md)
-- [ ] Slim stack Phase 2+ (grid-layout, XYFlow, …) — [SLIM_STACK.md](./SLIM_STACK.md)
+- [x] Slim stack Phase 2 (PanelGrid replaces react-grid-layout) — [SLIM_STACK.md](./SLIM_STACK.md)
+- [ ] Slim stack Phase 3+ (XYFlow, …) — [SLIM_STACK.md](./SLIM_STACK.md)
 - [ ] **Albion / Debian nginx cutover** — planned in [DEBIAN_CUTOVER.md](DEBIAN_CUTOVER.md); not executed yet. Keep the watch list there updated when deploy surface changes. Private host details → gitignored `docs/homelab.md` (see `homelab.md.example`).
