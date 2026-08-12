@@ -1,5 +1,4 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { Link, useParams } from "react-router-dom";
 import {
   api,
   Element,
@@ -29,6 +28,7 @@ import {
   orderedModules,
   saveModuleOrder,
 } from "../lib/moduleOrder";
+import { Link, useProjectId } from "../lib/router";
 import { TIPS } from "../tips";
 
 const MODULE_TIPS: Record<ModuleType, string> = {
@@ -60,7 +60,7 @@ export default function ProjectWorkspace({
   user: User;
   onLogout: () => Promise<void>;
 }) {
-  const { projectId = "" } = useParams();
+  const projectId = useProjectId() || "";
   const [project, setProject] = useState<Project | null>(null);
   const [module, setModule] = useState<ModuleType>("manuscript");
   const [elements, setElements] = useState<Element[]>([]);

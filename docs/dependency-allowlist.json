@@ -43,8 +43,7 @@
   "npm": {
     "allowed_dependencies": [
       "react",
-      "react-dom",
-      "react-router-dom"
+      "react-dom"
     ],
     "allowed_devDependencies": [
       "@types/react",
@@ -53,9 +52,7 @@
       "typescript",
       "vite"
     ],
-    "phase_removals": {
-      "4": ["react-router-dom"]
-    },
+    "phase_removals": {},
     "banned": [
       "@tiptap/extension-link",
       "@tiptap/extension-placeholder",
@@ -65,6 +62,7 @@
       "@xyflow/react",
       "react-grid-layout",
       "@types/react-grid-layout",
+      "react-router-dom",
       "turndown",
       "@types/turndown"
     ]

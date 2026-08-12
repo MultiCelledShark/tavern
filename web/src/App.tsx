@@ -1,12 +1,13 @@
-import { useEffect, useState } from "react";
-import { Navigate, Route, Routes } from "react-router-dom";
+import { useEffect, useState, type ReactNode } from "react";
 import { api, User } from "./api/client";
 import TipHost from "./components/TipHost";
+import { Navigate, usePath } from "./lib/router";
 import LoginPage from "./pages/LoginPage";
 import ProjectsPage from "./pages/ProjectsPage";
 import ProjectWorkspace from "./pages/ProjectWorkspace";
 
 export default function App() {
+  const path = usePath();
   const [user, setUser] = useState<User | null>(null);
   const [loading, setLoading] = useState(true);
 
@@ -26,47 +27,34 @@ export default function App() {
     );
   }
 
+  const logout = async () => {
+    await api.logout();
+    setUser(null);
+  };
+
+  let page: ReactNode;
+  if (path === "/login") {
+    page = user ? <Navigate to="/" replace /> : <LoginPage onLogin={setUser} />;
+  } else if (path === "/" || path === "") {
+    page = user ? (
+      <ProjectsPage user={user} onLogout={logout} />
+    ) : (
+      <Navigate to="/login" replace />
+    );
+  } else if (path.startsWith("/project/")) {
+    page = user ? (
+      <ProjectWorkspace user={user} onLogout={logout} />
+    ) : (
+      <Navigate to="/login" replace />
+    );
+  } else {
+    page = <Navigate to={user ? "/" : "/login"} replace />;
+  }
+
   return (
     <>
       <TipHost />
-      <Routes>
-        <Route
-          path="/login"
-          element={user ? <Navigate to="/" replace /> : <LoginPage onLogin={setUser} />}
-        />
-        <Route
-          path="/"
-          element={
-            user ? (
-              <ProjectsPage
-                user={user}
-                onLogout={async () => {
-                  await api.logout();
-                  setUser(null);
-                }}
-              />
-            ) : (
-              <Navigate to="/login" replace />
-            )
-          }
-        />
-        <Route
-          path="/project/:projectId/*"
-          element={
-            user ? (
-              <ProjectWorkspace
-                user={user}
-                onLogout={async () => {
-                  await api.logout();
-                  setUser(null);
-                }}
-              />
-            ) : (
-              <Navigate to="/login" replace />
-            )
-          }
-        />
-      </Routes>
+      {page}
     </>
   );
 }

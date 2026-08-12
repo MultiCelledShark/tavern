@@ -45,17 +45,10 @@ Workspace path crates (`tavern-core`, `tavern-db`, `tavern-import`, `tavern-expo
 | Package | Why |
 |---|---|
 | `react` / `react-dom` | UI |
-| `react-router-dom` | routing (optional Phase 4 removal) |
-
-**Still allowed until later phases (scheduled removal):**
-
-| Package | Remove in |
-|---|---|
-| `react-router-dom` | Phase 4 (optional) |
 
 **Dev-only allow:** `vite`, `@vitejs/plugin-react`, `typescript`, `@types/react`, `@types/react-dom`.
 
-**Hard deny:** `@tiptap/*`, `react-grid-layout`, `@xyflow/react`, `turndown`, and any new runtime package not listed above.
+**Hard deny:** `@tiptap/*`, `react-grid-layout`, `@xyflow/react`, `react-router-dom`, `turndown`, and any new runtime package not listed above.
 
 ### Policy artifacts
 
@@ -102,9 +95,12 @@ Replace `@xyflow/react` with SVG/div pan-zoom graph (`RelationshipGraph`).
 
 Also: corkboard drag lag is unrelated to XYFlow — fixed by avoiding per-`dragover` React state churn and only persisting dirty cards.
 
-### Phase 4 — Router (optional)
+### Phase 4 — Router
 
-Keep `react-router-dom` or replace with ~50 lines of path state in `App.tsx`.
+Replace `react-router-dom` with a tiny history API helper (`web/src/lib/router.tsx`).
+
+**Touch:** `App.tsx`, `main.tsx`, `ProjectsPage`, `ProjectWorkspace`  
+**Exit:** login / projects / `/project/:id` navigation works; react-router gone.
 
 ### Phase 5 — Rust import diet
 
@@ -123,16 +119,14 @@ Vendoring/mirroring if needed; Renovate only for allowlisted packages; periodic 
 
 ## Baseline counts
 
-Captured during Phases 0–3 (re-run `scripts/check-dependency-allowlist.sh` for live numbers):
+Captured during Phases 0–4 (re-run `scripts/check-dependency-allowlist.sh` for live numbers):
 
-| Layer | Before Phase 0 | After Phase 1 | After Phase 2 | After Phase 3 | Target |
-|---|---|---|---|---|---|
-| Web runtime direct | 11 | 5 | 4 | **3** | 2–3 |
-| Web lockfile packages | ~223 | ~154 | ~95 | **~75** | ~30–60 |
-| Rust direct external | ~26 | ~23 | ~23 | ~23 | ~15–18 |
-| Rust transitive | ~250 | ~250 | ~250 | ~250 | ~150–200 (tokio/sqlx dominate) |
-
-Meaningful supply-chain shrink is mostly on the **npm** side. Rust stays chunky because tokio/sqlx are deep — that is the accepted trade.
+| Layer | Before | After Phase 4 |
+|---|---|---|
+| Web runtime direct | 11 | **2** (`react`, `react-dom`) |
+| Web lockfile packages | ~223 | **~71 audited** |
+| Rust direct external | ~26 | ~23 |
+| Rust transitive | ~250 | ~250 |
 
 ## Status
 
@@ -142,4 +136,5 @@ Meaningful supply-chain shrink is mostly on the **npm** side. Rust stays chunky 
 | 1 TipTap → bespoke editor | done |
 | 2 grid-layout → PanelGrid | done |
 | 3 XYFlow → bespoke graph | done |
-| 4–6 | not started |
+| 4 react-router → bespoke router | done |
+| 5–6 | not started |

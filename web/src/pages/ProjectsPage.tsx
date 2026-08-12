@@ -1,6 +1,6 @@
 import { FormEvent, useEffect, useState } from "react";
-import { Link, useNavigate } from "react-router-dom";
 import { api, Project, User } from "../api/client";
+import { Link, useNavigate } from "../lib/router";
 import { TIPS } from "../tips";
 
 export default function ProjectsPage({
