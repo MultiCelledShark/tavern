@@ -202,6 +202,10 @@ export default function ProjectWorkspace({
     if (!list.length) setSelectedId(null);
   }, [projectId, module, selectedId]);
 
+  const refreshAllElements = useCallback(async () => {
+    setAllElements(await api.elements(projectId));
+  }, [projectId]);
+
   useEffect(() => {
     (async () => {
       try {
@@ -216,7 +220,10 @@ export default function ProjectWorkspace({
   }, [projectId]);
 
   useEffect(() => {
+    // Leaving/entering a module: refresh the active list and the project-wide
+    // catalog used by manuscript quick links, maps, and relationship graph.
     refreshElements().catch((e) => setError(String(e)));
+    refreshAllElements().catch((e) => setError(String(e)));
   }, [module, projectId]); // eslint-disable-line react-hooks/exhaustive-deps
 
   async function createElement() {
@@ -239,7 +246,7 @@ export default function ProjectWorkspace({
     setNewTitle("");
     await refreshElements();
     setSelectedId(el.id);
-    setAllElements(await api.elements(projectId));
+    await refreshAllElements();
     if (compact) setPanel("list", false);
   }
 
@@ -540,7 +547,7 @@ export default function ProjectWorkspace({
             canEdit
             onSaved={async () => {
               await refreshElements();
-              setAllElements(await api.elements(projectId));
+              await refreshAllElements();
             }}
           />
         )}
@@ -560,7 +567,7 @@ export default function ProjectWorkspace({
             canEdit
             onChanged={async () => {
               await refreshElements();
-              setAllElements(await api.elements(projectId));
+              await refreshAllElements();
             }}
           />
         )}
@@ -581,6 +588,7 @@ export default function ProjectWorkspace({
                 metadata: selected.metadata,
               });
               await refreshElements();
+              await refreshAllElements();
             }}
           />
         )}
@@ -593,7 +601,7 @@ export default function ProjectWorkspace({
             }}
             onChanged={async () => {
               await refreshElements();
-              setAllElements(await api.elements(projectId));
+              await refreshAllElements();
             }}
           />
         )}
@@ -615,6 +623,7 @@ export default function ProjectWorkspace({
                   metadata: selected.metadata,
                 });
                 await refreshElements();
+                await refreshAllElements();
               }}
             />
           )}
