@@ -34,5 +34,5 @@
 - [x] Slim stack Phase 4 (bespoke router, react-router removed) — [SLIM_STACK.md](./SLIM_STACK.md)
 - [x] Slim stack Phase 5 (Campfire HTML without regex/once_cell) — [SLIM_STACK.md](./SLIM_STACK.md)
 - [x] Slim stack Phase 6 (deny / npm audit / Renovate allowlist) — [SLIM_STACK.md](./SLIM_STACK.md)
-- [ ] Optimization + bug-hunt passes before Debian cutover
+- [x] Optimization + bug-hunt pass (auth IDOR, SVG XSS, race/blur fixes, WAL, wikilink panels)
 - [ ] **Albion / Debian nginx cutover** — planned in [DEBIAN_CUTOVER.md](DEBIAN_CUTOVER.md); not executed yet. Keep the watch list there updated when deploy surface changes. Private host details → gitignored `docs/homelab.md` (see `homelab.md.example`).
