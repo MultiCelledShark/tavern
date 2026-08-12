@@ -13,6 +13,7 @@ version = "0.1.0"
 edition = "2021"
 license = "MIT"
 authors = ["Tavern"]
+publish = false
 
 [workspace.dependencies]
 anyhow = "1"

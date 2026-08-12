@@ -1,7 +1,7 @@
 # cargo-deny configuration for Tavern.
 # Install: cargo install cargo-deny --locked
 # Run:    cargo deny check
-# See docs/SLIM_STACK.md
+# See docs/SLIM_STACK.md (Phase 6)
 
 [graph]
 all-features = false
@@ -9,9 +9,9 @@ no-default-features = false
 
 [advisories]
 yanked = "warn"
-# Unmaintained / notice advisories should not block local builds by default.
+# Fail on unmaintained only for direct workspace deps.
 unmaintained = "workspace"
-notice = "warn"
+unsound = "workspace"
 
 [licenses]
 allow = [
@@ -31,12 +31,15 @@ allow = [
     "0BSD",
 ]
 confidence-threshold = 0.8
+unused-allowed-license = "allow"
+private = { ignore = true }
 
 [bans]
 multiple-versions = "warn"
 wildcards = "deny"
+# Path deps in private workspace crates are not crates.io wildcards.
+allow-wildcard-paths = true
 # Direct deps are gated by scripts/check-dependency-allowlist.sh.
-# Keep this list for crates we never want even transitively if possible.
 deny = []
 
 [sources]

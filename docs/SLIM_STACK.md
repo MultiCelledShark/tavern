@@ -57,6 +57,9 @@ Workspace path crates (`tavern-core`, `tavern-db`, `tavern-import`, `tavern-expo
 | [`dependency-allowlist.json`](./dependency-allowlist.json) | Machine-readable allow / phase-gated lists |
 | [`../deny.toml`](../deny.toml) | `cargo-deny` advisories / bans / licenses |
 | [`../scripts/check-dependency-allowlist.sh`](../scripts/check-dependency-allowlist.sh) | Fails if `package.json` / Cargo direct deps drift |
+| [`../scripts/check-deps.sh`](../scripts/check-deps.sh) | Full Phase 6 gate (allowlist + deny + npm audit) |
+| [`../renovate.json`](../renovate.json) | Renovate limited to allowlisted packages |
+| [`../.github/workflows/deps.yml`](../.github/workflows/deps.yml) | PR + weekly dependency gate |
 
 PR rule: adding a dependency updates `dependency-allowlist.json` with a one-line justification.
 
@@ -109,27 +112,49 @@ Replace `regex` / `once_cell` in Campfire parsing with hand-rolled `html_scan` h
 **Touch:** `crates/tavern-import` (`campfire_html.rs`, `html_scan.rs`), allowlist, workspace `Cargo.toml`  
 **Exit:** Campfire sample fixture still parses; no direct `regex` / `once_cell` deps.
 
-### Phase 6 — Hardening (ongoing)
+### Phase 6 — Hardening
 
-Vendoring/mirroring if needed; Renovate only for allowlisted packages; periodic `cargo deny` + audit on the small surface.
+Land a repeatable dependency gate and keep the allowlist small:
+
+1. `./scripts/check-deps.sh` — allowlist drift + `cargo deny check` + `npm audit` (moderate+)
+2. `.github/workflows/deps.yml` — runs the gate on PRs/pushes and weekly
+3. `renovate.json` — only opens update PRs for packages on `dependency-allowlist.json`
+4. Optional vendoring notes for airgapped / Debian cutover builds (see below)
+
+**Vendoring (optional, not in-tree by default):** when a build host cannot reach crates.io/npm:
+
+```bash
+# Rust — write vendor/ + .cargo/config.toml (do not commit unless cutover needs it)
+mkdir -p .cargo
+cargo vendor > .cargo/config.toml
+
+# Web — prefer committing web/package-lock.json and using npm ci offline after a warm cache
+cd web && npm ci --prefer-offline
+```
+
+For Debian cutover, prefer a trusted build host that runs `check-deps.sh` then ships `target/release/tavern` + recorded commit SHA (see [DEBIAN_CUTOVER.md](./DEBIAN_CUTOVER.md)).
+
+**Cadence:** run `./scripts/check-deps.sh` before release builds; CI weekly cron catches advisory drift.
+
+**Exit:** deny.toml valid on current cargo-deny; CI workflow present; Renovate scoped to allowlist; docs describe cadence/vendoring.
 
 ## Order
 
 ```text
 0 freeze/allowlist → 1 TipTap out → 2 grid-layout out → 3 XYFlow out
-                 → 4 router? → 5 Rust trim → 6 deny/audit cadence
+                 → 4 router → 5 Rust trim → 6 deny/audit cadence
 ```
 
 ## Baseline counts
 
-Captured during Phases 0–5 (re-run `scripts/check-dependency-allowlist.sh` for live numbers):
+Captured after Phases 0–5 (re-run `./scripts/check-deps.sh` for live numbers):
 
 | Layer | Before | After Phase 5 |
 |---|---|---|
 | Web runtime direct | 11 | **2** (`react`, `react-dom`) |
 | Web lockfile packages | ~223 | **~71 audited** |
-| Rust direct external | ~26 | **~21** (dropped regex, once_cell, thiserror) |
-| Rust transitive | ~250 | lower (no regex/once_cell tree) |
+| Rust direct external | ~26 | **~20** |
+| Rust transitive | ~250 | lower (no direct regex/once_cell) |
 
 ## Status
 
@@ -141,4 +166,4 @@ Captured during Phases 0–5 (re-run `scripts/check-dependency-allowlist.sh` for
 | 3 XYFlow → bespoke graph | done |
 | 4 react-router → bespoke router | done |
 | 5 Rust import diet (no regex/once_cell) | done |
-| 6 Hardening | not started |
+| 6 Hardening (deny / audit / Renovate) | done |

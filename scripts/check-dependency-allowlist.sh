@@ -63,10 +63,3 @@ if errors:
     sys.exit(1)
 print("OK")
 PY
-
-if command -v cargo >/dev/null && cargo deny --version >/dev/null 2>&1; then
-  echo "running cargo deny check..."
-  (cd "$ROOT" && cargo deny check)
-else
-  echo "cargo-deny not installed; skipped (optional). Install: cargo install cargo-deny --locked"
-fi
