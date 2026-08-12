@@ -1043,6 +1043,9 @@ async fn import_project(
         }
     }
     let bytes = bytes.ok_or(ApiError::bad("file required"))?;
+    if bytes.len() > 32 * 1024 * 1024 {
+        return Err(ApiError::bad("import too large (max 32MB)"));
+    }
     let (intermediate, report) =
         tavern_import::load_bytes(&bytes, filename.as_deref())?;
     let prepared = tavern_import::prepare(intermediate, report)?;

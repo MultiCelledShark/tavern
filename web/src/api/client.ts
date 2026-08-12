@@ -90,13 +90,15 @@ export type AssetInfo = {
 };
 
 async function req<T>(path: string, init?: RequestInit): Promise<T> {
+  const headers = new Headers(init?.headers);
+  // Let the browser set multipart boundaries for FormData; JSON otherwise.
+  if (!(init?.body instanceof FormData) && !headers.has("Content-Type")) {
+    headers.set("Content-Type", "application/json");
+  }
   const res = await fetch(path, {
-    credentials: "include",
-    headers: {
-      ...(init?.body instanceof FormData ? {} : { "Content-Type": "application/json" }),
-      ...(init?.headers || {}),
-    },
     ...init,
+    credentials: "include",
+    headers,
   });
   if (!res.ok) {
     let msg = res.statusText;
@@ -240,7 +242,7 @@ export const api = {
     fd.append("file", file);
     return req<{ project: Project; report: { notes: string[]; unsupported_modules: string[] } }>(
       "/api/import",
-      { method: "POST", body: fd, headers: {} }
+      { method: "POST", body: fd }
     );
   },
   createTutorial: () =>
