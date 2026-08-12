@@ -16,6 +16,7 @@ type TipState = {
 
 const SHOW_DELAY_MS = 280;
 const HIDE_DELAY_MS = 180;
+const AUTO_DISMISS_MS = 3000;
 const GAP = 8;
 const VIEW_PAD = 10;
 
@@ -93,6 +94,7 @@ export default function TipHost() {
   const anchorRef = useRef<HTMLElement | null>(null);
   const showTimer = useRef<number | null>(null);
   const hideTimer = useRef<number | null>(null);
+  const decayTimer = useRef<number | null>(null);
   const overTip = useRef(false);
 
   useEffect(() => {
@@ -112,13 +114,28 @@ export default function TipHost() {
       }
     }
 
+    function clearDecay() {
+      if (decayTimer.current != null) {
+        window.clearTimeout(decayTimer.current);
+        decayTimer.current = null;
+      }
+    }
+
     function dismiss() {
       clearShow();
       clearHide();
+      clearDecay();
       overTip.current = false;
       anchorRef.current = null;
       setTip(null);
       setCoords(null);
+    }
+
+    function scheduleDecay() {
+      clearDecay();
+      decayTimer.current = window.setTimeout(() => {
+        dismiss();
+      }, AUTO_DISMISS_MS);
     }
 
     function hideSoon() {
@@ -142,6 +159,7 @@ export default function TipHost() {
           placement: preferredPlacement(el),
           anchor: el.getBoundingClientRect(),
         });
+        scheduleDecay();
       };
 
       // Switching tips: update immediately. First tip: short delay.
@@ -215,6 +233,7 @@ export default function TipHost() {
     return () => {
       clearShow();
       clearHide();
+      clearDecay();
       document.removeEventListener("mouseover", onOver, true);
       document.removeEventListener("mouseout", onOut, true);
       document.removeEventListener("focusin", onFocusIn, true);

@@ -201,15 +201,32 @@ export default function PanelCanvas({
                 <span className="drag-handle" data-tip={TIPS.panelDrag}>
                   ⠿
                 </span>
-                <input
+                <textarea
+                  className="panel-title"
                   value={panel.title}
-                  onChange={(e) =>
+                  rows={1}
+                  wrap="soft"
+                  onChange={(e) => {
+                    const next = e.target.value.replace(/\n/g, " ");
                     setPanels((all) =>
-                      all.map((p) => (p.id === panel.id ? { ...p, title: e.target.value } : p))
-                    )
-                  }
+                      all.map((p) => (p.id === panel.id ? { ...p, title: next } : p))
+                    );
+                    e.target.style.height = "auto";
+                    e.target.style.height = `${Math.max(e.target.scrollHeight, 22)}px`;
+                  }}
                   onBlur={() => persistPanel(panel, { title: panel.title })}
-                  style={{ border: "none", background: "transparent", padding: 0 }}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter") {
+                      e.preventDefault();
+                      (e.target as HTMLTextAreaElement).blur();
+                    }
+                  }}
+                  ref={(node) => {
+                    if (node) {
+                      node.style.height = "auto";
+                      node.style.height = `${Math.max(node.scrollHeight, 22)}px`;
+                    }
+                  }}
                   data-tip={TIPS.panelTitle}
                 />
                 <div className="spacer" />

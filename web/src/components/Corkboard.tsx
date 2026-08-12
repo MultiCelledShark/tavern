@@ -37,6 +37,11 @@ function sameLayout(a: CorkItem[], b: CorkItem[]): boolean {
   );
 }
 
+function autoSizeTitle(el: HTMLTextAreaElement) {
+  el.style.height = "auto";
+  el.style.height = `${Math.max(el.scrollHeight, 28)}px`;
+}
+
 /** Move `fromId` into the grid slot currently occupied by `toId`. */
 function moveToSlot(items: CorkItem[], fromId: string, toId: string): CorkItem[] {
   if (fromId === toId) return items;
@@ -224,7 +229,7 @@ export default function Corkboard({
             draggable
             data-tip={TIPS.corkDrag}
             onDragStart={(e) => {
-              if ((e.target as HTMLElement).closest("input, button.open-chapter")) {
+              if ((e.target as HTMLElement).closest("input, textarea, button.open-chapter")) {
                 e.preventDefault();
                 return;
               }
@@ -256,22 +261,33 @@ export default function Corkboard({
               void applyMove(fromId, it.id);
             }}
           >
-            <input
+            <textarea
               className="cork-title"
               value={it.title}
+              rows={1}
+              wrap="soft"
               draggable={false}
               data-tip={TIPS.corkRename}
-              onFocus={() => {
+              onFocus={(e) => {
                 editStartTitle.current[it.id] = it.title;
+                autoSizeTitle(e.currentTarget);
               }}
-              onChange={(e) =>
-                setItems((all) => all.map((c) => (c.id === it.id ? { ...c, title: e.target.value } : c)))
-              }
-              onBlur={(e) => void commitRename(it.id, e.target.value)}
+              onChange={(e) => {
+                const next = e.target.value.replace(/\n/g, " ");
+                setItems((all) => all.map((c) => (c.id === it.id ? { ...c, title: next } : c)));
+                autoSizeTitle(e.target);
+              }}
+              onBlur={(e) => void commitRename(it.id, e.target.value.replace(/\n/g, " ").trim())}
               onKeyDown={(e) => {
-                if (e.key === "Enter") (e.target as HTMLInputElement).blur();
+                if (e.key === "Enter") {
+                  e.preventDefault();
+                  (e.target as HTMLTextAreaElement).blur();
+                }
               }}
               onPointerDown={(e) => e.stopPropagation()}
+              ref={(node) => {
+                if (node) autoSizeTitle(node);
+              }}
             />
             <button
               type="button"
