@@ -572,6 +572,7 @@ export default function ProjectWorkspace({
           <ManuscriptEditor
             element={selected}
             allElements={allElements}
+            focusMode={focused}
             onRenamed={async (title) => {
               await api.updateElement(selected.id, {
                 title,

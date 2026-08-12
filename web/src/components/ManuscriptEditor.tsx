@@ -10,10 +10,12 @@ export default function ManuscriptEditor({
   element,
   allElements,
   onRenamed,
+  focusMode = false,
 }: {
   element: Element;
   allElements: Element[];
   onRenamed: (title: string) => Promise<void>;
+  focusMode?: boolean;
 }) {
   const [title, setTitle] = useState(element.title);
   const [markdown, setMarkdown] = useState("");
@@ -102,8 +104,9 @@ export default function ManuscriptEditor({
         <button className="primary" data-tip={TIPS.msSave} onClick={save}>
           {saved ? "Saved" : "Save"}
         </button>
-        <div className="spacer" />
-        <TipHint tip={TIPS.msEditor} label="Manuscript writing tips" />
+        {!focusMode && (
+          <TipHint tip={TIPS.msEditor} label="Manuscript writing tips" />
+        )}
       </div>
 
       {sourceMode ? (
