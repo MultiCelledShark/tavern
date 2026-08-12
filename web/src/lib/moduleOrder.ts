@@ -51,9 +51,15 @@ export function moveModule(
   toId: ModuleType
 ): ModuleType[] {
   if (fromId === toId) return order;
-  const next = order.filter((id) => id !== fromId);
-  const toIndex = next.indexOf(toId);
-  if (toIndex < 0) return order;
+  const fromIndex = order.indexOf(fromId);
+  const toIndex = order.indexOf(toId);
+  if (fromIndex < 0 || toIndex < 0) return order;
+
+  const next = order.slice();
+  next.splice(fromIndex, 1);
+  // After removal, indices above `fromIndex` shift down by one. Using the
+  // original `toIndex` therefore inserts *before* the target when moving up,
+  // and *after* the target when moving down — so adjacent downward moves work.
   next.splice(toIndex, 0, fromId);
   return next;
 }
