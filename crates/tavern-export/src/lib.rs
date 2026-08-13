@@ -5,7 +5,9 @@ use serde::{Deserialize, Serialize};
 use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::process::Command;
-use tavern_core::{Element, IntermediateElement, IntermediateLink, IntermediateProject, ModuleType};
+use tavern_core::{
+    Element, IntermediateElement, IntermediateLink, IntermediateProject, ModuleType,
+};
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -111,11 +113,7 @@ fn title_case(s: &str) -> String {
     }
 }
 
-pub fn write_with_pandoc(
-    markdown: &str,
-    out_path: &Path,
-    format: ExportFormat,
-) -> Result<PathBuf> {
+pub fn write_with_pandoc(markdown: &str, out_path: &Path, format: ExportFormat) -> Result<PathBuf> {
     std::fs::create_dir_all(out_path.parent().unwrap_or(Path::new(".")))?;
     match format.pandoc_to() {
         None => {
@@ -220,6 +218,7 @@ pub fn elements_to_intermediate(
                 title: p.title,
                 content: p.content,
                 layout: Some(p.layout),
+                page_title: None,
             })
             .collect();
         out_elements.push(IntermediateElement {

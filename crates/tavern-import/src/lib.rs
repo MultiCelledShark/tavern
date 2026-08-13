@@ -17,6 +17,7 @@ use tavern_core::{
 };
 
 mod campfire_html;
+mod html_scan;
 
 #[derive(Debug, Clone)]
 pub struct ImportReport {
@@ -33,10 +34,13 @@ pub fn load_path(path: &Path) -> Result<(IntermediateProject, ImportReport)> {
     load_bytes(&bytes, path.file_name().and_then(|s| s.to_str()))
 }
 
-pub fn load_bytes(bytes: &[u8], filename: Option<&str>) -> Result<(IntermediateProject, ImportReport)> {
+pub fn load_bytes(
+    bytes: &[u8],
+    filename: Option<&str>,
+) -> Result<(IntermediateProject, ImportReport)> {
     if looks_like_json(bytes) {
-        let project: IntermediateProject = serde_json::from_slice(bytes)
-            .context("parse intermediate / tavern JSON")?;
+        let project: IntermediateProject =
+            serde_json::from_slice(bytes).context("parse intermediate / tavern JSON")?;
         let report = ImportReport {
             format: "tavern_intermediate_json".into(),
             title: project.title.clone(),
@@ -99,16 +103,14 @@ fn looks_like_json(bytes: &[u8]) -> bool {
         .skip_while(|b| b.is_ascii_whitespace())
         .copied()
         .next();
-    matches!(trimmed, Some(b'{') | Some(b'['))
+    matches!(trimmed, Some(b'{'))
 }
 
 fn load_zip(bytes: &[u8], filename: Option<&str>) -> Result<(IntermediateProject, ImportReport)> {
+    const MAX_ENTRY: u64 = 32 * 1024 * 1024;
     let cursor = Cursor::new(bytes);
     let mut archive = zip::ZipArchive::new(cursor).context("open zip backup")?;
-    let mut notes = vec![format!(
-        "ZIP archive with {} entries",
-        archive.len()
-    )];
+    let mut notes = vec![format!("ZIP archive with {} entries", archive.len())];
     let mut unsupported = Vec::new();
 
     // Prefer known intermediate / manifest names
@@ -120,6 +122,9 @@ fn load_zip(bytes: &[u8], filename: Option<&str>) -> Result<(IntermediateProject
         "export.json",
     ] {
         if let Ok(mut f) = archive.by_name(candidate) {
+            if f.size() > MAX_ENTRY {
+                anyhow::bail!("zip entry {candidate} too large");
+            }
             let mut buf = String::new();
             f.read_to_string(&mut buf)?;
             if let Ok(project) = serde_json::from_str::<IntermediateProject>(&buf) {
@@ -170,6 +175,10 @@ fn load_zip(bytes: &[u8], filename: Option<&str>) -> Result<(IntermediateProject
         let Ok(mut f) = archive.by_name(name) else {
             continue;
         };
+        if f.size() > MAX_ENTRY {
+            notes.push(format!("Skipped oversized entry {name}"));
+            continue;
+        }
         let mut buf = String::new();
         if f.read_to_string(&mut buf).is_err() {
             continue;
@@ -191,7 +200,11 @@ fn load_zip(bytes: &[u8], filename: Option<&str>) -> Result<(IntermediateProject
             metadata: serde_json::json!({ "entries": names }),
             body_markdown: Some(format!(
                 "Could not map this Campfire ZIP yet.\n\nFiles:\n{}",
-                names.iter().map(|n| format!("- `{n}`")).collect::<Vec<_>>().join("\n")
+                names
+                    .iter()
+                    .map(|n| format!("- `{n}`"))
+                    .collect::<Vec<_>>()
+                    .join("\n")
             )),
             panels: vec![],
             unsupported_source: Some("campfire_zip".into()),
@@ -401,6 +414,10 @@ fn map_element_value(item: &Value, _unsupported: &mut Vec<String>) -> Intermedia
                 layout: p
                     .get("layout")
                     .and_then(|v| serde_json::from_value::<PanelLayout>(v.clone()).ok()),
+                page_title: p
+                    .get("page_title")
+                    .and_then(|x| x.as_str())
+                    .map(|s| s.to_string()),
             });
         }
     } else if let Some(md) = &body {
@@ -409,6 +426,7 @@ fn map_element_value(item: &Value, _unsupported: &mut Vec<String>) -> Intermedia
             title: "Content".into(),
             content: serde_json::json!({ "markdown": md }),
             layout: None,
+            page_title: None,
         });
     }
 

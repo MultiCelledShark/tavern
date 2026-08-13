@@ -146,14 +146,18 @@ export type AssetInfo = {
   size: number;
 };
 
+const elementTitleCache = new Map<string, string>();
+
 async function req<T>(path: string, init?: RequestInit): Promise<T> {
+  const headers = new Headers(init?.headers);
+  // Let the browser set multipart boundaries for FormData; JSON otherwise.
+  if (!(init?.body instanceof FormData) && !headers.has("Content-Type")) {
+    headers.set("Content-Type", "application/json");
+  }
   const res = await fetch(path, {
-    credentials: "include",
-    headers: {
-      ...(init?.body instanceof FormData ? {} : { "Content-Type": "application/json" }),
-      ...(init?.headers || {}),
-    },
     ...init,
+    credentials: "include",
+    headers,
   });
   if (!res.ok) {
     let msg = res.statusText;
@@ -191,11 +195,13 @@ async function openProject(p: Project): Promise<Project> {
 
 async function openElement(el: Element): Promise<Element> {
   rememberElementProject(el.id, el.project_id);
-  return {
+  const opened = {
     ...el,
     title: await openText(el.project_id, el.title),
     metadata: await openMeta(el.project_id, el.metadata),
   };
+  elementTitleCache.set(opened.id, opened.title);
+  return opened;
 }
 
 async function openPage(page: Page, projectId: string): Promise<Page> {
@@ -272,6 +278,7 @@ export const api = {
     return Promise.all(rows.map(openProject));
   },
   createProject: async (title: string, synopsis = "") => {
+    if (!title.trim()) throw new Error("title required");
     const vault = getVault();
     let key: CryptoKey | undefined;
     let sendTitle = title;
@@ -314,6 +321,7 @@ export const api = {
     projectId: string,
     body: { module_type: ModuleType; title: string; parent_id?: string; metadata?: object }
   ) => {
+    if (!body.title.trim()) throw new Error("title required");
     const el = await req<Element>(`/api/projects/${projectId}/elements`, {
       method: "POST",
       body: JSON.stringify({
@@ -328,8 +336,14 @@ export const api = {
     id: string,
     body: { title: string; parent_id: string | null; sort_order: number; metadata: object }
   ) => {
-    const projectId =
-      projectForElement(id) || (await req<Element>(`/api/elements/${id}`)).project_id;
+    if (!body.title.trim()) throw new Error("title required");
+    let projectId = projectForElement(id);
+    let oldTitle = elementTitleCache.get(id);
+    if (!projectId || oldTitle === undefined) {
+      const existing = await openElement(await req<Element>(`/api/elements/${id}`));
+      projectId = existing.project_id;
+      oldTitle = existing.title;
+    }
     rememberElementProject(id, projectId);
     const el = await req<Element>(`/api/elements/${id}`, {
       method: "PUT",
@@ -339,7 +353,16 @@ export const api = {
         metadata: await sealMeta(projectId, body.metadata as Record<string, unknown>),
       }),
     });
-    return openElement(el);
+    const opened = await openElement(el);
+    if (getProjectKey(projectId) && oldTitle !== body.title) {
+      await rewriteEncryptedWikilinks(
+        projectId,
+        opened.module_type,
+        oldTitle,
+        body.title
+      );
+    }
+    return opened;
   },
   deleteElement: (id: string) => req<void>(`/api/elements/${id}`, { method: "DELETE" }),
   pages: async (elementId: string) => {
@@ -587,6 +610,97 @@ export const api = {
     return { ...res, project: await openProject(res.project) };
   },
 };
+
+function rewriteWikiText(
+  text: string,
+  moduleType: ModuleType,
+  oldTitle: string,
+  newTitle: string
+): string {
+  const label = moduleType.charAt(0).toUpperCase() + moduleType.slice(1);
+  return text
+    .split(`[[${label}:${oldTitle}]]`)
+    .join(`[[${label}:${newTitle}]]`)
+    .split(`[[${moduleType}:${oldTitle}]]`)
+    .join(`[[${moduleType}:${newTitle}]]`);
+}
+
+function rewriteWikiValue(
+  value: unknown,
+  moduleType: ModuleType,
+  oldTitle: string,
+  newTitle: string
+): [unknown, boolean] {
+  if (typeof value === "string") {
+    const next = rewriteWikiText(value, moduleType, oldTitle, newTitle);
+    return [next, next !== value];
+  }
+  if (Array.isArray(value)) {
+    let changed = false;
+    const next = value.map((item) => {
+      const [rewritten, itemChanged] = rewriteWikiValue(item, moduleType, oldTitle, newTitle);
+      changed ||= itemChanged;
+      return rewritten;
+    });
+    return [next, changed];
+  }
+  if (value && typeof value === "object") {
+    let changed = false;
+    const next = Object.fromEntries(
+      Object.entries(value).map(([key, item]) => {
+        const [rewritten, itemChanged] = rewriteWikiValue(item, moduleType, oldTitle, newTitle);
+        changed ||= itemChanged;
+        return [key, rewritten];
+      })
+    );
+    return [next, changed];
+  }
+  return [value, false];
+}
+
+async function rewriteEncryptedWikilinks(
+  projectId: string,
+  moduleType: ModuleType,
+  oldTitle: string,
+  newTitle: string
+) {
+  const elements = await api.elements(projectId);
+  for (const element of elements) {
+    if (element.module_type === "manuscript") {
+      const body = await api.manuscript(element.id);
+      const markdown = rewriteWikiText(body.markdown, moduleType, oldTitle, newTitle);
+      if (markdown !== body.markdown) {
+        await api.saveManuscript(
+          element.id,
+          markdown,
+          body.word_goal,
+          body.updated_at
+        );
+      }
+      continue;
+    }
+    const pages = await api.pages(element.id);
+    for (const page of pages) {
+      const panels = await api.panels(page.id);
+      for (const panel of panels) {
+        const [content, changed] = rewriteWikiValue(
+          panel.content,
+          moduleType,
+          oldTitle,
+          newTitle
+        );
+        if (!changed) continue;
+        await api.updatePanel(panel.id, {
+          title: panel.title,
+          border_color: panel.border_color,
+          layout: panel.layout,
+          content: content as Record<string, unknown>,
+          sort_order: panel.sort_order,
+        });
+      }
+    }
+  }
+}
 
 async function compileLocalMarkdown(projectId: string, kind: string): Promise<string> {
   const project = await api.getProject(projectId);

@@ -1,9 +1,9 @@
 import { FormEvent, useEffect, useState } from "react";
-import { Link } from "react-router-dom";
 import { api, User } from "../api/client";
 import RecoveryKey from "../components/RecoveryKey";
 import { createVault, parseEnvelope } from "../crypto/vault";
 import { setVault, unlockEnvelope } from "../crypto/session";
+import { Link } from "../lib/router";
 import { TIPS } from "../tips";
 
 export default function LoginPage({ onLogin }: { onLogin: (u: User) => void }) {

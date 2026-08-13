@@ -1,10 +1,10 @@
 pub mod auth;
 pub mod mail;
-pub mod routes;
-pub mod state;
 mod rate_limit;
+pub mod routes;
 mod security;
 mod session_cache;
+pub mod state;
 
 use anyhow::Result;
 use axum::extract::DefaultBodyLimit;
@@ -17,6 +17,10 @@ use tavern_core::Config;
 use tavern_db::Db;
 use tower_http::compression::CompressionLayer;
 use tower_http::trace::TraceLayer;
+
+/// Campfire HTML exports embed images as data-URIs and routinely exceed Axum's
+/// 2 MiB default; asset uploads allow up to 12 MiB. Keep headroom for both.
+const MAX_REQUEST_BODY_BYTES: usize = 32 * 1024 * 1024;
 
 pub async fn build_state(config: Config) -> Result<Arc<AppState>> {
     config.ensure_dirs()?;
@@ -56,9 +60,9 @@ pub async fn build_state(config: Config) -> Result<Arc<AppState>> {
 pub fn app(state: Arc<AppState>) -> Router {
     Router::new()
         .merge(routes::router())
-        .layer(DefaultBodyLimit::max(32 * 1024 * 1024))
         .layer(middleware::from_fn(security::security_headers))
         .layer(CompressionLayer::new())
         .layer(TraceLayer::new_for_http())
+        .layer(DefaultBodyLimit::max(MAX_REQUEST_BODY_BYTES))
         .with_state(state)
 }

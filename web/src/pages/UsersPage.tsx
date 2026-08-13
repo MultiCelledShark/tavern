@@ -1,6 +1,6 @@
 import { FormEvent, useEffect, useState } from "react";
-import { Link } from "react-router-dom";
 import { api, User } from "../api/client";
+import { Link } from "../lib/router";
 import { TIPS } from "../tips";
 
 export default function UsersPage({

@@ -19,7 +19,7 @@ Status: **planned only**. Update this doc whenever app behavior changes the depl
 | Listen | `TAVERN_LISTEN` default `0.0.0.0:8084` | Prefer `127.0.0.1:8084` behind nginx |
 | Data | `TAVERN_DATABASE_URL` (Postgres) + `TAVERN_DATA_DIR` for `projects/*/assets`, imports/exports | Dump/restore Postgres separately from the assets tree |
 | Auth cookies | `TAVERN_COOKIE_SECURE`, `TAVERN_TRUST_PROXY` | Set both to `1` when HTTPS terminates at nginx |
-| Uploads | `POST /api/projects/{id}/assets` (images ≤ 12MB) | nginx `client_max_body_size` must be ≥ 12MB (recommend 16m) |
+| Uploads | `POST /api/projects/{id}/assets` (images ≤ 12MB); `POST /api/import` (≤ 32MB) | nginx `client_max_body_size` must be ≥ 32MB for Campfire HTML exports with embedded images (recommend `32m` or `64m`) |
 | Export | pandoc optional for DOCX/EPUB/PDF | Install `pandoc` on the server if those formats matter |
 | Unit | `deploy/debian/tavern.service` | `ReadWritePaths=/var/lib/tavern` already covers DB + assets |
 
@@ -39,9 +39,10 @@ Fill `docs/homelab.md` (gitignored) or Forgejo wiki with:
 
 On a build host (or CI):
 
-1. `cd web && npm ci && npm run build && cd ..`
-2. `cargo build -p tavern-server --release`
-3. Record commit SHA on the binary host for rollback
+1. `./scripts/check-deps.sh` (allowlist + `cargo deny` + `npm audit`)
+2. `cd web && npm ci && npm run build && cd ..`
+3. `cargo build -p tavern-server --release`
+4. Record commit SHA on the binary host for rollback
 
 Ship: `target/release/tavern` (or musl static build if preferred).
 
@@ -73,7 +74,7 @@ Ship: `target/release/tavern` (or musl static build if preferred).
 ### 4. nginx cutover
 
 1. Add server block (see placeholders in `deploy/debian/README.md`)
-2. Set `client_max_body_size 16m;` for asset uploads
+2. Set `client_max_body_size 32m;` (Campfire HTML imports with embedded images; asset uploads are ≤ 12MB)
 3. Proxy headers: `Host`, `X-Forwarded-For`, `X-Forwarded-Proto`
 4. Enable site, reload nginx, verify HTTPS login + cookie session
 5. Point DNS / LAN name at the Debian host

@@ -9,9 +9,9 @@ use sqlx::postgres::{PgPool, PgPoolOptions, PgRow};
 use sqlx::Row;
 use std::time::Duration as StdDuration;
 use tavern_core::{
-    default_panel_layout_for, default_template_pages, default_theme, Element, ElementLink, GrantRole,
-    ModuleType, Page, Panel, PanelLayout, PanelType, Project, ProjectGrant, ProjectInvite, Template,
-    User,
+    default_panel_layout_for, default_template_pages, default_theme, Element, ElementLink,
+    GrantRole, ModuleType, Page, Panel, PanelLayout, PanelType, Project, ProjectGrant,
+    ProjectInvite, Template, User,
 };
 use uuid::Uuid;
 
@@ -72,13 +72,13 @@ impl Db {
     }
 
     pub fn validate_password_strength(password: &str) -> Result<()> {
-        if password == "admin" || password == "change-me-to-a-strong-password" {
-            // allow bootstrap default only if long enough for first boot docs;
-            // operators should change it — warn elsewhere
-        }
-        if password == "admin" {
+        if password == "admin"
+            || password == "change-me-to-a-strong-password"
+            || password == "replace-with-a-long-secret"
+        {
             return Err(anyhow!(
-                "refusing default password 'admin'; set a strong TAVERN_ADMIN_PASS"
+                "refusing insecure default password; set a strong TAVERN_ADMIN_PASS (≥{} chars)",
+                Self::MIN_PASSWORD_LEN
             ));
         }
         if password.len() < Self::MIN_PASSWORD_LEN {
@@ -199,7 +199,9 @@ impl Db {
         if expires < Utc::now() {
             return Ok(None);
         }
-        Ok(Some(Uuid::parse_str(r.get::<String, _>("user_id").as_str()).unwrap()))
+        Ok(Some(
+            Uuid::parse_str(r.get::<String, _>("user_id").as_str()).unwrap(),
+        ))
     }
 
     pub async fn upsert_project_key_wrap(
@@ -253,7 +255,12 @@ impl Db {
         Ok(r.rows_affected() > 0)
     }
 
-    pub async fn set_email(&self, user_id: Uuid, email: Option<&str>, verified: bool) -> Result<()> {
+    pub async fn set_email(
+        &self,
+        user_id: Uuid,
+        email: Option<&str>,
+        verified: bool,
+    ) -> Result<()> {
         sqlx::query("UPDATE users SET email = $1, email_verified = $2 WHERE id = $3")
             .bind(email)
             .bind(verified as i64)
@@ -453,17 +460,11 @@ impl Db {
         Ok(())
     }
 
-    pub async fn project_access(
-        &self,
-        user: &User,
-        project_id: Uuid,
-    ) -> Result<Option<GrantRole>> {
-        let row = sqlx::query(
-            "SELECT owner_id FROM projects WHERE id = $1",
-        )
-        .bind(project_id.to_string())
-        .fetch_optional(&self.pool)
-        .await?;
+    pub async fn project_access(&self, user: &User, project_id: Uuid) -> Result<Option<GrantRole>> {
+        let row = sqlx::query("SELECT owner_id FROM projects WHERE id = $1")
+            .bind(project_id.to_string())
+            .fetch_optional(&self.pool)
+            .await?;
         let Some(r) = row else {
             return Ok(None);
         };
@@ -471,13 +472,12 @@ impl Db {
         if owner_id == user.id {
             return Ok(Some(GrantRole::Owner));
         }
-        let grant = sqlx::query(
-            "SELECT role FROM project_grants WHERE project_id = $1 AND user_id = $2",
-        )
-        .bind(project_id.to_string())
-        .bind(user.id.to_string())
-        .fetch_optional(&self.pool)
-        .await?;
+        let grant =
+            sqlx::query("SELECT role FROM project_grants WHERE project_id = $1 AND user_id = $2")
+                .bind(project_id.to_string())
+                .bind(user.id.to_string())
+                .fetch_optional(&self.pool)
+                .await?;
         Ok(grant.and_then(|g| GrantRole::parse(&g.get::<String, _>("role"))))
     }
 
@@ -487,6 +487,10 @@ impl Db {
         title: &str,
         synopsis: &str,
     ) -> Result<Project> {
+        let title = title.trim();
+        if title.is_empty() {
+            return Err(anyhow!("title required"));
+        }
         let id = Uuid::new_v4();
         let now = Utc::now();
         let theme = default_theme().to_string();
@@ -693,11 +697,13 @@ impl Db {
     }
 
     pub async fn delete_invite(&self, project_id: Uuid, invite_id: Uuid) -> Result<()> {
-        sqlx::query("DELETE FROM project_invites WHERE id = $1 AND project_id = $2 AND used_at IS NULL")
-            .bind(invite_id.to_string())
-            .bind(project_id.to_string())
-            .execute(&self.pool)
-            .await?;
+        sqlx::query(
+            "DELETE FROM project_invites WHERE id = $1 AND project_id = $2 AND used_at IS NULL",
+        )
+        .bind(invite_id.to_string())
+        .bind(project_id.to_string())
+        .execute(&self.pool)
+        .await?;
         Ok(())
     }
 
@@ -724,7 +730,8 @@ impl Db {
         }
         let invite_id: String = r.get("id");
         let project_id = Uuid::parse_str(r.get::<String, _>("project_id").as_str()).unwrap();
-        let role = GrantRole::parse_shareable(&r.get::<String, _>("role")).unwrap_or(GrantRole::Viewer);
+        let role =
+            GrantRole::parse_shareable(&r.get::<String, _>("role")).unwrap_or(GrantRole::Viewer);
         let key_wrap = r.get::<Option<String>, _>("key_wrap");
         sqlx::query("UPDATE project_invites SET used_at = $1 WHERE id = $2")
             .bind(Utc::now().to_rfc3339())
@@ -732,6 +739,24 @@ impl Db {
             .execute(&self.pool)
             .await?;
         Ok(Some((project_id, role, key_wrap)))
+    }
+
+    async fn assert_parent_in_project(
+        &self,
+        project_id: Uuid,
+        parent_id: Option<Uuid>,
+    ) -> Result<()> {
+        let Some(pid) = parent_id else {
+            return Ok(());
+        };
+        let parent = self
+            .get_element(pid)
+            .await?
+            .ok_or_else(|| anyhow!("parent element not found"))?;
+        if parent.project_id != project_id {
+            return Err(anyhow!("parent element must belong to the same project"));
+        }
+        Ok(())
     }
 
     pub async fn create_element(
@@ -743,6 +768,11 @@ impl Db {
         metadata: serde_json::Value,
         apply_default_template: bool,
     ) -> Result<Element> {
+        let title = title.trim();
+        if title.is_empty() {
+            return Err(anyhow!("title required"));
+        }
+        self.assert_parent_in_project(project_id, parent_id).await?;
         let id = Uuid::new_v4();
         let now = Utc::now();
         let sort = self.next_element_sort(project_id, module_type).await?;
@@ -881,11 +911,17 @@ impl Db {
         sort_order: i64,
         metadata: serde_json::Value,
     ) -> Result<Element> {
+        let title = title.trim();
+        if title.is_empty() {
+            return Err(anyhow!("title required"));
+        }
         let now = Utc::now();
         let el = self
             .get_element(id)
             .await?
             .ok_or_else(|| anyhow!("element not found"))?;
+        self.assert_parent_in_project(el.project_id, parent_id)
+            .await?;
         sqlx::query(
             "UPDATE elements SET title = $1, parent_id = $2, sort_order = $3, metadata = $4, updated_at = $5 WHERE id = $6",
         )
@@ -967,15 +1003,13 @@ impl Db {
         description: &str,
         sort_order: i64,
     ) -> Result<Page> {
-        sqlx::query(
-            "UPDATE pages SET title = $1, description = $2, sort_order = $3 WHERE id = $4",
-        )
-        .bind(title)
-        .bind(description)
-        .bind(sort_order)
-        .bind(id.to_string())
-        .execute(&self.pool)
-        .await?;
+        sqlx::query("UPDATE pages SET title = $1, description = $2, sort_order = $3 WHERE id = $4")
+            .bind(title)
+            .bind(description)
+            .bind(sort_order)
+            .bind(id.to_string())
+            .execute(&self.pool)
+            .await?;
         let row = sqlx::query(
             "SELECT id, element_id, title, sort_order, description FROM pages WHERE id = $1",
         )
@@ -1094,6 +1128,17 @@ impl Db {
         link_type: &str,
         metadata: serde_json::Value,
     ) -> Result<ElementLink> {
+        let from = self
+            .get_element(from_element_id)
+            .await?
+            .ok_or_else(|| anyhow!("from element not found"))?;
+        let to = self
+            .get_element(to_element_id)
+            .await?
+            .ok_or_else(|| anyhow!("to element not found"))?;
+        if from.project_id != project_id || to.project_id != project_id {
+            return Err(anyhow!("link endpoints must belong to the same project"));
+        }
         let id = Uuid::new_v4();
         sqlx::query(
             "INSERT INTO element_links (id, project_id, from_element_id, to_element_id, label, link_type, metadata)
@@ -1208,6 +1253,85 @@ impl Db {
         Ok(Some(now))
     }
 
+    /// Rewrite `[[Module:old_title]]` tokens across manuscripts and panel content in a project.
+    pub async fn rewrite_wikilinks_in_project(
+        &self,
+        project_id: Uuid,
+        module: ModuleType,
+        old_title: &str,
+        new_title: &str,
+    ) -> Result<usize> {
+        use tavern_core::rewrite_wikilinks;
+
+        if old_title == new_title || old_title.is_empty() {
+            return Ok(0);
+        }
+        let mut updated = 0usize;
+        let now = Utc::now().to_rfc3339();
+
+        let ms_rows = sqlx::query(
+            "SELECT mb.element_id AS element_id, mb.markdown AS markdown, mb.word_goal AS word_goal
+             FROM manuscript_bodies mb
+             INNER JOIN elements e ON e.id = mb.element_id
+             WHERE e.project_id = $1",
+        )
+        .bind(project_id.to_string())
+        .fetch_all(&self.pool)
+        .await?;
+
+        for row in ms_rows {
+            let element_id: String = row.get("element_id");
+            let markdown: String = row.get("markdown");
+            let word_goal: i64 = row.get("word_goal");
+            let next = rewrite_wikilinks(&markdown, module, old_title, new_title);
+            if next == markdown {
+                continue;
+            }
+            sqlx::query(
+                "UPDATE manuscript_bodies SET markdown = $1, word_goal = $2, updated_at = $3 WHERE element_id = $4",
+            )
+            .bind(&next)
+            .bind(word_goal)
+            .bind(&now)
+            .bind(&element_id)
+            .execute(&self.pool)
+            .await?;
+            updated += 1;
+        }
+
+        // Panel JSON may embed wikilink tokens in markdown / text fields.
+        let panel_rows = sqlx::query(
+            "SELECT p.id AS id, p.content_json AS content_json
+             FROM panels p
+             INNER JOIN pages pg ON pg.id = p.page_id
+             INNER JOIN elements e ON e.id = pg.element_id
+             WHERE e.project_id = $1",
+        )
+        .bind(project_id.to_string())
+        .fetch_all(&self.pool)
+        .await?;
+
+        for row in panel_rows {
+            let panel_id: String = row.get("id");
+            let content: String = row.get("content_json");
+            let next = rewrite_wikilinks(&content, module, old_title, new_title);
+            if next == content {
+                continue;
+            }
+            sqlx::query("UPDATE panels SET content_json = $1 WHERE id = $2")
+                .bind(&next)
+                .bind(&panel_id)
+                .execute(&self.pool)
+                .await?;
+            updated += 1;
+        }
+
+        if updated > 0 {
+            self.touch_project(project_id).await?;
+        }
+        Ok(updated)
+    }
+
     pub async fn save_template(
         &self,
         owner_id: Uuid,
@@ -1292,6 +1416,20 @@ fn map_user(r: PgRow) -> User {
         email_verified: r.get::<i64, _>("email_verified") != 0,
         has_vault: r.try_get::<i64, _>("has_vault").unwrap_or(0) != 0,
         created_at: parse_dt(r.get::<String, _>("created_at")),
+    }
+}
+
+#[cfg(test)]
+mod password_tests {
+    use super::Db;
+
+    #[test]
+    fn rejects_insecure_defaults() {
+        assert!(Db::validate_password_strength("admin").is_err());
+        assert!(Db::validate_password_strength("change-me-to-a-strong-password").is_err());
+        assert!(Db::validate_password_strength("replace-with-a-long-secret").is_err());
+        assert!(Db::validate_password_strength("short").is_err());
+        assert!(Db::validate_password_strength("a-reasonable-passphrase").is_ok());
     }
 }
 
@@ -1389,8 +1527,6 @@ fn map_invite(r: PgRow) -> ProjectInvite {
         created_by: Uuid::parse_str(r.get::<String, _>("created_by").as_str()).unwrap(),
         expires_at: parse_dt(r.get("expires_at")),
         created_at: parse_dt(r.get("created_at")),
-        used_at: r
-            .get::<Option<String>, _>("used_at")
-            .map(parse_dt),
+        used_at: r.get::<Option<String>, _>("used_at").map(parse_dt),
     }
 }

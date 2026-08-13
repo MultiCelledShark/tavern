@@ -3,7 +3,10 @@ use std::path::PathBuf;
 
 fn main() -> Result<()> {
     let mut args = std::env::args().skip(1);
-    let input = PathBuf::from(args.next().ok_or_else(|| anyhow::anyhow!("usage: tavern-import <file> [out.json]"))?);
+    let input = PathBuf::from(
+        args.next()
+            .ok_or_else(|| anyhow::anyhow!("usage: tavern-import <file> [out.json]"))?,
+    );
     let output = args
         .next()
         .map(PathBuf::from)
@@ -17,7 +20,10 @@ fn main() -> Result<()> {
     println!("elements: {}", report.element_count);
     println!("links: {}", report.link_count);
     if !report.unsupported_modules.is_empty() {
-        println!("unsupported tags: {}", report.unsupported_modules.join(", "));
+        println!(
+            "unsupported tags: {}",
+            report.unsupported_modules.join(", ")
+        );
     }
     for n in report.notes {
         println!("note: {n}");

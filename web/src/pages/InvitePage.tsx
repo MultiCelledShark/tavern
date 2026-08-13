@@ -1,9 +1,16 @@
-import { useEffect, useState } from "react";
-import { Link, Navigate, useNavigate, useParams } from "react-router-dom";
+import { useEffect, useMemo, useState } from "react";
 import { api, User } from "../api/client";
+import { Link, Navigate, useNavigate, usePath } from "../lib/router";
 
 export default function InvitePage({ user }: { user: User | null }) {
-  const { token = "" } = useParams();
+  const path = usePath();
+  const token = useMemo(() => {
+    try {
+      return decodeURIComponent(path.slice("/invite/".length));
+    } catch {
+      return "";
+    }
+  }, [path]);
   const navigate = useNavigate();
   const [error, setError] = useState<string | null>(null);
 

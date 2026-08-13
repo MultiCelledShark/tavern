@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
-import { Link, useSearchParams } from "react-router-dom";
 import { api } from "../api/client";
+import { Link, useSearchParams } from "../lib/router";
 
 export default function VerifyPage() {
   const [params] = useSearchParams();

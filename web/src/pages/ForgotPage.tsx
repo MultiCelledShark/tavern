@@ -1,6 +1,6 @@
 import { FormEvent, useState } from "react";
-import { Link } from "react-router-dom";
 import { api } from "../api/client";
+import { Link } from "../lib/router";
 
 export default function ForgotPage() {
   const [email, setEmail] = useState("");

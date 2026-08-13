@@ -1,7 +1,7 @@
 import { FormEvent, useMemo, useState } from "react";
-import { Link, useSearchParams } from "react-router-dom";
 import { api } from "../api/client";
 import { parseEnvelope, rewrapVaultPassword, unlockWithRecovery } from "../crypto/vault";
+import { Link, useSearchParams } from "../lib/router";
 
 export default function ResetPage() {
   const [params] = useSearchParams();

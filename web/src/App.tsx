@@ -1,6 +1,7 @@
-import { useEffect, useState } from "react";
-import { Navigate, Route, Routes, useLocation } from "react-router-dom";
+import { useEffect, useState, type ReactNode } from "react";
 import { api, User } from "./api/client";
+import TipHost from "./components/TipHost";
+import { Navigate, usePath } from "./lib/router";
 import LoginPage from "./pages/LoginPage";
 import SignupPage from "./pages/SignupPage";
 import ForgotPage from "./pages/ForgotPage";
@@ -20,6 +21,7 @@ function safeNext(search: string): string {
 }
 
 export default function App() {
+  const path = usePath();
   const [user, setUser] = useState<User | null>(null);
   const [loading, setLoading] = useState(true);
   const [vaultReady, setVaultReady] = useState(false);
@@ -57,94 +59,75 @@ export default function App() {
 
   const locked = !!user && !vaultReady && !getVault();
 
-  return (
-    <Routes>
-      <Route
-        path="/login"
-        element={
-          user ? (
-            locked ? (
-              <UnlockPage
-                user={user}
-                onReady={() => setVaultReady(true)}
-                onLogout={logout}
-              />
-            ) : (
-              <LoginRedirect />
-            )
-          ) : (
-            <LoginPage
-              onLogin={(u) => {
-                setUser(u);
-                setVaultReady(!!getVault());
-              }}
-            />
-          )
-        }
+  let page: ReactNode;
+  if (path === "/login") {
+    page = user ? (
+      locked ? (
+        <UnlockPage user={user} onReady={() => setVaultReady(true)} onLogout={logout} />
+      ) : (
+        <Navigate to={safeNext(window.location.search)} replace />
+      )
+    ) : (
+      <LoginPage
+        onLogin={(u) => {
+          setUser(u);
+          setVaultReady(!!getVault());
+        }}
       />
-      <Route path="/signup" element={user ? <Navigate to="/" replace /> : <SignupPage />} />
-      <Route path="/forgot" element={user ? <Navigate to="/" replace /> : <ForgotPage />} />
-      <Route path="/reset" element={<ResetPage />} />
-      <Route path="/verify" element={<VerifyPage />} />
-      <Route
-        path="/invite/:token"
-        element={
-          locked && user ? (
-            <UnlockPage user={user} onReady={() => setVaultReady(true)} onLogout={logout} />
-          ) : (
-            <InvitePage user={user} />
-          )
-        }
-      />
-      <Route
-        path="/"
-        element={
-          user ? (
-            locked ? (
-              <UnlockPage user={user} onReady={() => setVaultReady(true)} onLogout={logout} />
-            ) : (
-              <ProjectsPage user={user} onLogout={logout} />
-            )
-          ) : (
-            <Navigate to="/login" replace />
-          )
-        }
-      />
-      <Route
-        path="/users"
-        element={
-          user?.is_admin ? (
-            locked ? (
-              <UnlockPage user={user} onReady={() => setVaultReady(true)} onLogout={logout} />
-            ) : (
-              <UsersPage user={user} onLogout={logout} />
-            )
-          ) : user ? (
-            <Navigate to="/" replace />
-          ) : (
-            <Navigate to="/login" replace />
-          )
-        }
-      />
-      <Route
-        path="/project/:projectId/*"
-        element={
-          user ? (
-            locked ? (
-              <UnlockPage user={user} onReady={() => setVaultReady(true)} onLogout={logout} />
-            ) : (
-              <ProjectWorkspace user={user} onLogout={logout} />
-            )
-          ) : (
-            <Navigate to="/login" replace />
-          )
-        }
-      />
-    </Routes>
-  );
-}
+    );
+  } else if (path === "/signup") {
+    page = user ? <Navigate to="/" replace /> : <SignupPage />;
+  } else if (path === "/forgot") {
+    page = user ? <Navigate to="/" replace /> : <ForgotPage />;
+  } else if (path === "/reset") {
+    page = <ResetPage />;
+  } else if (path === "/verify") {
+    page = <VerifyPage />;
+  } else if (path.startsWith("/invite/")) {
+    page =
+      locked && user ? (
+        <UnlockPage user={user} onReady={() => setVaultReady(true)} onLogout={logout} />
+      ) : (
+        <InvitePage user={user} />
+      );
+  } else if (path === "/" || path === "") {
+    page = user ? (
+      locked ? (
+        <UnlockPage user={user} onReady={() => setVaultReady(true)} onLogout={logout} />
+      ) : (
+        <ProjectsPage user={user} onLogout={logout} />
+      )
+    ) : (
+      <Navigate to="/login" replace />
+    );
+  } else if (path === "/users") {
+    page = user?.is_admin ? (
+      locked ? (
+        <UnlockPage user={user} onReady={() => setVaultReady(true)} onLogout={logout} />
+      ) : (
+        <UsersPage user={user} onLogout={logout} />
+      )
+    ) : (
+      <Navigate to={user ? "/" : "/login"} replace />
+    );
+  } else if (path.startsWith("/project/")) {
+    page = user ? (
+      locked ? (
+        <UnlockPage user={user} onReady={() => setVaultReady(true)} onLogout={logout} />
+      ) : (
+        <ProjectWorkspace user={user} onLogout={logout} />
+      )
+    ) : (
+      <Navigate to="/login" replace />
+    );
+  } else {
+    page = <Navigate to={user ? "/" : "/login"} replace />;
+  }
 
-function LoginRedirect() {
-  const loc = useLocation();
-  return <Navigate to={safeNext(loc.search)} replace />;
+  return (
+    <>
+      <TipHost />
+      {page}
+    </>
+  );
 }

@@ -108,9 +108,7 @@ fn build_transport(
 ) -> Result<AsyncSmtpTransport<Tokio1Executor>, lettre::transport::smtp::Error> {
     let builder = match cfg.smtp_security.as_str() {
         "tls" => AsyncSmtpTransport::<Tokio1Executor>::relay(host)?,
-        "off" | "none" | "plain" => {
-            AsyncSmtpTransport::<Tokio1Executor>::builder_dangerous(host)
-        }
+        "off" | "none" | "plain" => AsyncSmtpTransport::<Tokio1Executor>::builder_dangerous(host),
         _ => AsyncSmtpTransport::<Tokio1Executor>::starttls_relay(host)?,
     };
     let mut builder = builder.port(cfg.smtp_port);

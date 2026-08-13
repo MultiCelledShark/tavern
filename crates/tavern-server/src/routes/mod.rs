@@ -43,10 +43,7 @@ pub fn router() -> Router<Arc<AppState>> {
         .route("/api/auth/vault", get(get_vault).put(put_vault))
         .route("/api/auth/reset-vault", get(reset_vault))
         .route("/api/crypto/pubkey/{username}", get(crypto_pubkey))
-        .route(
-            "/api/projects/{id}/key-wrap",
-            put(put_project_key_wrap),
-        )
+        .route("/api/projects/{id}/key-wrap", put(put_project_key_wrap))
         .route(
             "/api/projects/{id}/invites/{invite_id}/key-wrap",
             put(put_invite_key_wrap),
@@ -62,10 +59,7 @@ pub fn router() -> Router<Arc<AppState>> {
             "/api/projects/{id}/grants",
             get(list_grants).post(upsert_grant),
         )
-        .route(
-            "/api/projects/{id}/grants/{user_id}",
-            delete(delete_grant),
-        )
+        .route("/api/projects/{id}/grants/{user_id}", delete(delete_grant))
         .route(
             "/api/projects/{id}/invites",
             get(list_invites).post(create_invite),
@@ -87,18 +81,12 @@ pub fn router() -> Router<Arc<AppState>> {
             "/api/elements/{id}/pages",
             get(list_pages).post(create_page),
         )
-        .route(
-            "/api/pages/{id}",
-            put(update_page).delete(delete_page),
-        )
+        .route("/api/pages/{id}", put(update_page).delete(delete_page))
         .route(
             "/api/pages/{id}/panels",
             get(list_panels).post(create_panel),
         )
-        .route(
-            "/api/panels/{id}",
-            put(update_panel).delete(delete_panel),
-        )
+        .route("/api/panels/{id}", put(update_panel).delete(delete_panel))
         .route(
             "/api/projects/{id}/links",
             get(list_links).post(create_link),
@@ -109,14 +97,8 @@ pub fn router() -> Router<Arc<AppState>> {
             get(get_manuscript).put(put_manuscript),
         )
         .route("/api/templates", get(list_templates).post(save_template))
-        .route(
-            "/api/projects/{id}/export",
-            post(export_project),
-        )
-        .route(
-            "/api/projects/{id}/backup",
-            post(backup_project),
-        )
+        .route("/api/projects/{id}/export", post(export_project))
+        .route("/api/projects/{id}/backup", post(backup_project))
         .route(
             "/api/projects/{id}/assets",
             get(list_assets).post(upload_asset),
@@ -285,7 +267,13 @@ async fn signup(
     }
     let user = state
         .db
-        .create_user(body.username.trim(), &body.password, false, Some(&email), false)
+        .create_user(
+            body.username.trim(),
+            &body.password,
+            false,
+            Some(&email),
+            false,
+        )
         .await?;
     if let Some(crypto) = body.crypto_json.as_ref() {
         let raw = crypto.to_string();
@@ -459,7 +447,9 @@ async fn get_vault(
     State(state): State<Arc<AppState>>,
 ) -> Result<Json<serde_json::Value>, ApiError> {
     let vault = state.db.get_crypto_json(user.id).await?;
-    Ok(Json(serde_json::json!({ "vault": parse_vault_json(vault) })))
+    Ok(Json(
+        serde_json::json!({ "vault": parse_vault_json(vault) }),
+    ))
 }
 
 #[derive(Deserialize)]
@@ -487,15 +477,13 @@ async fn reset_vault(
     State(state): State<Arc<AppState>>,
     Query(q): Query<ResetVaultQuery>,
 ) -> Result<Json<serde_json::Value>, ApiError> {
-    let Some(user_id) = state
-        .db
-        .peek_email_token(q.token.trim(), "reset")
-        .await?
-    else {
+    let Some(user_id) = state.db.peek_email_token(q.token.trim(), "reset").await? else {
         return Err(ApiError::not_found("reset"));
     };
     let vault = state.db.get_crypto_json(user_id).await?;
-    Ok(Json(serde_json::json!({ "vault": parse_vault_json(vault) })))
+    Ok(Json(
+        serde_json::json!({ "vault": parse_vault_json(vault) }),
+    ))
 }
 
 async fn crypto_pubkey(
@@ -556,7 +544,11 @@ async fn put_invite_key_wrap(
 ) -> Result<StatusCode, ApiError> {
     require_manage(&state, &user, id).await?;
     validate_wrap(&body.wrap)?;
-    if !state.db.set_invite_key_wrap(id, invite_id, &body.wrap).await? {
+    if !state
+        .db
+        .set_invite_key_wrap(id, invite_id, &body.wrap)
+        .await?
+    {
         return Err(ApiError::not_found("invite"));
     }
     Ok(StatusCode::NO_CONTENT)
@@ -596,10 +588,20 @@ async fn create_user(
             "username must be 3–32 letters, numbers, _ or -",
         ));
     }
-    if state.db.get_user_by_username(&body.username).await?.is_some() {
+    if state
+        .db
+        .get_user_by_username(&body.username)
+        .await?
+        .is_some()
+    {
         return Err(ApiError::bad("username taken"));
     }
-    let email = match body.email.as_deref().map(str::trim).filter(|s| !s.is_empty()) {
+    let email = match body
+        .email
+        .as_deref()
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+    {
         Some(raw) => {
             let Some(e) = tavern_core::normalize_email(raw) else {
                 return Err(ApiError::bad("invalid email"));
@@ -715,9 +717,7 @@ async fn update_project(
     Json(body): Json<UpdateProjectBody>,
 ) -> Result<Json<ProjectView>, ApiError> {
     let role = require_edit(&state, &user, id).await?;
-    let theme = body
-        .theme_json
-        .unwrap_or_else(tavern_core::default_theme);
+    let theme = body.theme_json.unwrap_or_else(tavern_core::default_theme);
     let p = state
         .db
         .update_project(id, &body.title, &body.synopsis, &theme)
@@ -971,12 +971,24 @@ async fn update_element(
             return Err(ApiError::bad("parent is not in this project"));
         }
     }
-    Ok(Json(
-        state
+    let updated = state
+        .db
+        .update_element(
+            id,
+            &body.title,
+            body.parent_id,
+            body.sort_order,
+            body.metadata,
+        )
+        .await?;
+    // Keep manuscript [[Module:Title]] tokens in sync when a linked element is renamed.
+    if el.title != body.title {
+        let _ = state
             .db
-            .update_element(id, &body.title, body.parent_id, body.sort_order, body.metadata)
-            .await?,
-    ))
+            .rewrite_wikilinks_in_project(el.project_id, el.module_type, &el.title, &body.title)
+            .await?;
+    }
+    Ok(Json(updated))
 }
 
 async fn delete_element(
@@ -1486,6 +1498,7 @@ fn safe_asset_name(original: &str) -> Result<String, ApiError> {
         .and_then(|e| e.to_str())
         .unwrap_or("bin")
         .to_ascii_lowercase();
+    // SVG omitted: served inline it becomes same-origin scriptable XSS.
     let allowed = ["png", "jpg", "jpeg", "webp", "gif"];
     if !allowed.contains(&ext.as_str()) {
         return Err(ApiError::bad("only image uploads (png/jpg/webp/gif)"));
@@ -1594,7 +1607,16 @@ async fn get_asset(
     let mime = mime_guess::from_path(&path)
         .first_or_octet_stream()
         .to_string();
-    Ok(([(header::CONTENT_TYPE, mime)], bytes).into_response())
+    // Refuse to serve leftover SVGs as navigable documents (XSS).
+    if mime.starts_with("image/svg") || name.to_ascii_lowercase().ends_with(".svg") {
+        return Err(ApiError::bad("svg assets are disabled"));
+    }
+    let mut res = ([(header::CONTENT_TYPE, mime)], bytes).into_response();
+    res.headers_mut().insert(
+        header::HeaderName::from_static("x-content-type-options"),
+        header::HeaderValue::from_static("nosniff"),
+    );
+    Ok(res)
 }
 
 async fn delete_asset(
@@ -1620,7 +1642,11 @@ async fn import_project(
 ) -> Result<Json<serde_json::Value>, ApiError> {
     let mut bytes = None;
     let mut filename = None;
-    while let Some(field) = multipart.next_field().await.map_err(|e| ApiError::bad(&e.to_string()))? {
+    while let Some(field) = multipart
+        .next_field()
+        .await
+        .map_err(|e| ApiError::bad(&e.to_string()))?
+    {
         if field.name() == Some("file") {
             filename = field.file_name().map(|s| s.to_string());
             bytes = Some(
@@ -1643,8 +1669,7 @@ async fn import_project(
     if bytes.len() > 32 * 1024 * 1024 {
         return Err(ApiError::bad("import too large (max 32MB)"));
     }
-    let (intermediate, report) =
-        tavern_import::load_bytes(&bytes, filename.as_deref())?;
+    let (intermediate, report) = tavern_import::load_bytes(&bytes, filename.as_deref())?;
     let prepared = tavern_import::prepare(intermediate, report)?;
     materialize_import(&state, user.id, prepared).await
 }
@@ -1656,7 +1681,11 @@ async fn materialize_import(
 ) -> Result<Json<serde_json::Value>, ApiError> {
     let project = state
         .db
-        .create_project(owner_id, &prepared.project.title, &prepared.project.synopsis)
+        .create_project(
+            owner_id,
+            &prepared.project.title,
+            &prepared.project.synopsis,
+        )
         .await?;
 
     let mut title_to_id: HashMap<String, Uuid> = HashMap::new();
@@ -1688,29 +1717,43 @@ async fn materialize_import(
             for p in pages {
                 state.db.delete_page(p.id).await?;
             }
-            let page = state
-                .db
-                .create_page(created.id, "Imported", "", 0)
-                .await?;
-            for (i, panel) in el.panels.iter().enumerate() {
-                let ptype =
-                    PanelType::parse(&panel.panel_type).unwrap_or(PanelType::Text);
-                let layout = panel
-                    .layout
-                    .clone()
-                    .unwrap_or_else(|| default_panel_layout_for(ptype.as_str(), i));
-                state
+            let mut page_groups: Vec<(String, Vec<&tavern_core::IntermediatePanel>)> = Vec::new();
+            for panel in &el.panels {
+                let page_name = panel
+                    .page_title
+                    .as_deref()
+                    .filter(|s| !s.is_empty())
+                    .unwrap_or("Imported");
+                if let Some(group) = page_groups.iter_mut().find(|(t, _)| t == page_name) {
+                    group.1.push(panel);
+                } else {
+                    page_groups.push((page_name.to_string(), vec![panel]));
+                }
+            }
+            for (page_idx, (page_title, panels)) in page_groups.iter().enumerate() {
+                let page = state
                     .db
-                    .create_panel(
-                        page.id,
-                        ptype,
-                        &panel.title,
-                        None,
-                        layout,
-                        panel.content.clone(),
-                        i as i64,
-                    )
+                    .create_page(created.id, page_title, "", page_idx as i64)
                     .await?;
+                for (i, panel) in panels.iter().enumerate() {
+                    let ptype = PanelType::parse(&panel.panel_type).unwrap_or(PanelType::Text);
+                    let layout = panel
+                        .layout
+                        .clone()
+                        .unwrap_or_else(|| default_panel_layout_for(ptype.as_str(), i));
+                    state
+                        .db
+                        .create_panel(
+                            page.id,
+                            ptype,
+                            &panel.title,
+                            None,
+                            layout,
+                            panel.content.clone(),
+                            i as i64,
+                        )
+                        .await?;
+                }
             }
         } else if let Some(md) = &el.body_markdown {
             let pages = state.db.list_pages(created.id).await?;
@@ -1797,10 +1840,7 @@ async fn list_modules() -> Json<serde_json::Value> {
 async fn index() -> Response {
     match Assets::get("index.html") {
         Some(f) => (
-            [(
-                header::CACHE_CONTROL,
-                "no-cache, no-store, must-revalidate",
-            )],
+            [(header::CACHE_CONTROL, "no-cache, no-store, must-revalidate")],
             Html(
                 std::str::from_utf8(f.data.as_ref())
                     .unwrap_or("<p>Tavern UI missing</p>")
@@ -1837,10 +1877,7 @@ async fn static_asset(Path(path): Path<String>) -> Response {
             (
                 [
                     (header::CONTENT_TYPE, mime.as_str()),
-                    (
-                        header::CACHE_CONTROL,
-                        "public, max-age=31536000, immutable",
-                    ),
+                    (header::CACHE_CONTROL, "public, max-age=31536000, immutable"),
                 ],
                 f.data.to_vec(),
             )
@@ -2054,6 +2091,26 @@ impl ApiError {
 
 impl From<anyhow::Error> for ApiError {
     fn from(e: anyhow::Error) -> Self {
+        let message = e.to_string();
+        let lower = message.to_ascii_lowercase();
+        if lower.contains("title required")
+            || lower.contains("must belong")
+            || lower.contains("not found")
+            || lower.contains("refusing")
+            || lower.contains("password must")
+            || lower.contains("elements must")
+            || lower.contains("parent element")
+        {
+            return Self {
+                status: if lower.contains("not found") {
+                    StatusCode::NOT_FOUND
+                } else {
+                    StatusCode::BAD_REQUEST
+                },
+                message,
+                body: None,
+            };
+        }
         tracing::error!(error = %e, "request failed");
         Self::internal()
     }

@@ -1,0 +1,64 @@
+{
+  "$schema": "https://docs.renovatebot.com/renovate-schema.json",
+  "extends": ["config:recommended"],
+  "description": "Only bump packages on docs/dependency-allowlist.json. See docs/SLIM_STACK.md Phase 6.",
+  "enabledManagers": ["cargo", "npm"],
+  "rangeStrategy": "bump",
+  "labels": ["dependencies"],
+  "prConcurrentLimit": 3,
+  "packageRules": [
+    {
+      "description": "Default: do not open PRs for transitive / non-allowlisted packages",
+      "matchPackageNames": ["*"],
+      "enabled": false
+    },
+    {
+      "description": "Web runtime allowlist",
+      "matchManagers": ["npm"],
+      "matchPackageNames": ["react", "react-dom"],
+      "enabled": true,
+      "groupName": "web runtime"
+    },
+    {
+      "description": "Web tooling allowlist",
+      "matchManagers": ["npm"],
+      "matchPackageNames": [
+        "@types/react",
+        "@types/react-dom",
+        "@vitejs/plugin-react",
+        "typescript",
+        "vite"
+      ],
+      "enabled": true,
+      "groupName": "web tooling"
+    },
+    {
+      "description": "Rust direct allowlist (workspace.dependencies)",
+      "matchManagers": ["cargo"],
+      "matchPackageNames": [
+        "anyhow",
+        "argon2",
+        "axum",
+        "axum-extra",
+        "chrono",
+        "dotenvy",
+        "hex",
+        "mime_guess",
+        "rand",
+        "rust-embed",
+        "serde",
+        "serde_json",
+        "sha2",
+        "sqlx",
+        "tokio",
+        "tower-http",
+        "tracing",
+        "tracing-subscriber",
+        "uuid",
+        "zip"
+      ],
+      "enabled": true,
+      "groupName": "rust direct"
+    }
+  ]
+}

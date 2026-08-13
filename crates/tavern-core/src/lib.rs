@@ -31,7 +31,7 @@ impl Default for Config {
             data_dir: PathBuf::from("./data"),
             database_url: "postgres://tavern:tavern@127.0.0.1:5432/tavern".into(),
             admin_username: "tavern_admin".into(),
-            admin_password: "change-me-to-a-strong-password".into(),
+            admin_password: "replace-with-a-long-secret".into(),
             cookie_secure: false,
             trust_proxy: false,
             signup_enabled: true,
@@ -439,6 +439,9 @@ pub struct IntermediatePanel {
     pub title: String,
     pub content: serde_json::Value,
     pub layout: Option<PanelLayout>,
+    /// Campfire page name this panel belonged to (preserved on HTML import).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub page_title: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -470,7 +473,7 @@ pub fn default_panel_layout_for(panel_type: &str, index: usize) -> PanelLayout {
         "text" => (6.0, 8.0),
         "attributes" | "stats" | "list" => (6.0, 6.0),
         "table" => (6.0, 6.0),
-        "image" => (6.0, 7.0),
+        "image" => (6.0, 10.0),
         "links" => (6.0, 5.0),
         _ => (6.0, 6.0),
     };
@@ -678,7 +681,8 @@ pub fn default_template_pages(module: ModuleType) -> serde_json::Value {
 pub fn valid_username(s: &str) -> bool {
     let t = s.trim();
     (3..=32).contains(&t.len())
-        && t.chars().all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-')
+        && t.chars()
+            .all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-')
 }
 
 pub fn normalize_email(s: &str) -> Option<String> {
@@ -698,4 +702,74 @@ pub fn normalize_email(s: &str) -> Option<String> {
         return None;
     }
     Some(e)
+}
+
+/// Capitalize module type the same way the web UI builds wiki tokens
+/// (`character` → `Character`).
+pub fn wiki_module_label(module: ModuleType) -> String {
+    let s = module.as_str();
+    let mut chars = s.chars();
+    match chars.next() {
+        Some(c) => c.to_uppercase().collect::<String>() + chars.as_str(),
+        None => String::new(),
+    }
+}
+
+/// Build a manuscript wiki token: `[[Character:Name]]`.
+pub fn wiki_link_token(module: ModuleType, title: &str) -> String {
+    format!("[[{}:{}]]", wiki_module_label(module), title)
+}
+
+/// Replace wiki-link tokens that point at `old_title` with `new_title`.
+/// Matching is exact on the full `[[Module:Title]]` token (module label
+/// compared case-insensitively).
+pub fn rewrite_wikilinks(
+    text: &str,
+    module: ModuleType,
+    old_title: &str,
+    new_title: &str,
+) -> String {
+    if old_title == new_title || old_title.is_empty() {
+        return text.to_string();
+    }
+    let label = wiki_module_label(module);
+    let old = format!("[[{}:{}]]", label, old_title);
+    let new = format!("[[{}:{}]]", label, new_title);
+    let mut out = text.replace(&old, &new);
+    // Also catch lowercase / alternate casing of the module label.
+    if label != module.as_str() {
+        let old_lower = format!("[[{}:{}]]", module.as_str(), old_title);
+        let new_lower = format!("[[{}:{}]]", module.as_str(), new_title);
+        out = out.replace(&old_lower, &new_lower);
+    }
+    out
+}
+
+#[cfg(test)]
+mod wiki_tests {
+    use super::*;
+
+    #[test]
+    fn rewrites_character_token() {
+        let md = "Hello [[Character:Rown]] and [[Character:Rown]] again.";
+        let out = rewrite_wikilinks(md, ModuleType::Character, "Rown", "Roan");
+        assert_eq!(
+            out,
+            "Hello [[Character:Roan]] and [[Character:Roan]] again."
+        );
+    }
+
+    #[test]
+    fn leaves_other_titles_alone() {
+        let md = "[[Character:Rown]] vs [[Character:Roan]]";
+        let out = rewrite_wikilinks(md, ModuleType::Character, "Rown", "Roan");
+        assert_eq!(out, "[[Character:Roan]] vs [[Character:Roan]]");
+    }
+
+    #[test]
+    fn ignores_partial_title_prefix() {
+        let md = "[[Character:Ro]] [[Character:Roan]]";
+        let out = rewrite_wikilinks(md, ModuleType::Character, "Ro", "Rox");
+        assert_eq!(out, "[[Character:Rox]] [[Character:Roan]]");
+    }
 }

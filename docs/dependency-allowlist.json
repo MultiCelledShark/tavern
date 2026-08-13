@@ -1,0 +1,65 @@
+{
+  "$comment": "Tavern dependency allowlist. See docs/SLIM_STACK.md. Update this file when adding deps.",
+  "rust": {
+    "allowed_direct": [
+      "anyhow",
+      "argon2",
+      "axum",
+      "axum-extra",
+      "chrono",
+      "cookie",
+      "dotenvy",
+      "hex",
+      "lettre",
+      "mime_guess",
+      "rand",
+      "rust-embed",
+      "serde",
+      "serde-json",
+      "serde_json",
+      "sha2",
+      "sqlx",
+      "tokio",
+      "tower-http",
+      "tracing",
+      "tracing-subscriber",
+      "uuid",
+      "zip"
+    ],
+    "allowed_workspace_path": [
+      "tavern-core",
+      "tavern-db",
+      "tavern-export",
+      "tavern-import",
+      "tavern-server"
+    ],
+    "notes": {}
+  },
+  "npm": {
+    "allowed_dependencies": [
+      "react",
+      "react-dom"
+    ],
+    "allowed_devDependencies": [
+      "@types/react",
+      "@types/react-dom",
+      "@vitejs/plugin-react",
+      "typescript",
+      "vite"
+    ],
+    "phase_removals": {},
+    "banned": [
+      "@tiptap/extension-link",
+      "@tiptap/extension-placeholder",
+      "@tiptap/pm",
+      "@tiptap/react",
+      "@tiptap/starter-kit",
+      "@xyflow/react",
+      "react-grid-layout",
+      "@types/react-grid-layout",
+      "react-router-dom",
+      "turndown",
+      "@types/turndown"
+    ]
+  }
+}

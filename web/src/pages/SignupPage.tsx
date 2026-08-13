@@ -1,8 +1,8 @@
 import { FormEvent, useState } from "react";
-import { Link } from "react-router-dom";
 import { api } from "../api/client";
 import RecoveryKey from "../components/RecoveryKey";
 import { createVault } from "../crypto/vault";
+import { Link } from "../lib/router";
 
 export default function SignupPage() {
   const [username, setUsername] = useState("");

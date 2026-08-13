@@ -115,6 +115,15 @@ a { color: var(--moss-dark); }
   margin-inline: auto;
 }
 
+/* Focus mode is distraction-free — no tips or tip affordances */
+.app-shell.focus-mode .tip-hint {
+  display: none !important;
+}
+
+.app-shell.focus-mode .manuscript-toolbar {
+  padding-right: 0;
+}
+
 .panel-chrome-head {
   display: flex;
   align-items: center;
@@ -171,32 +180,166 @@ label.buttonish {
   padding: 0.45rem 0.85rem;
 }
 
-.image-grid {
-  display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(120px, 1fr));
+.image-panel {
+  height: 100%;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
   gap: 0.65rem;
 }
 
-.image-thumb {
+.image-panel.solo {
+  min-height: 12rem;
+}
+
+.image-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(160px, 1fr));
+  gap: 0.65rem;
+  flex: 1;
+  min-height: 0;
+  align-content: stretch;
+}
+
+.image-grid.solo {
+  grid-template-columns: 1fr;
+  min-height: 14rem;
+}
+
+.image-figure {
   margin: 0;
   background: var(--paper);
   border: 1px solid var(--border);
   border-radius: 8px;
   overflow: hidden;
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+  height: 100%;
 }
 
-.image-thumb img {
-  display: block;
-  width: 100%;
-  height: 110px;
-  object-fit: cover;
+.image-frame {
+  flex: 1 1 auto;
+  min-height: 10rem;
+  display: flex;
+  align-items: center;
+  justify-content: center;
   background: #dfe5e1;
+  padding: 0.35rem;
+  border: none;
+  border-radius: 0;
+  cursor: zoom-in;
+  width: 100%;
+  color: inherit;
 }
 
-.image-thumb figcaption {
-  padding: 0.4rem;
+.image-grid.solo .image-frame {
+  min-height: 16rem;
+}
+
+.image-frame img {
+  display: block;
+  max-width: 100%;
+  max-height: 100%;
+  width: auto;
+  height: auto;
+  object-fit: contain;
+  object-position: center;
+  pointer-events: none;
+}
+
+.image-lightbox {
+  position: fixed;
+  inset: 0;
+  z-index: 11000;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 1.25rem;
+  background: rgba(28, 36, 33, 0.72);
+  cursor: zoom-out;
+}
+
+.image-lightbox-close {
+  position: fixed;
+  top: max(0.75rem, env(safe-area-inset-top, 0px));
+  right: max(0.75rem, env(safe-area-inset-right, 0px));
+  z-index: 11001;
+  width: 2.5rem;
+  height: 2.5rem;
+  border-radius: 999px;
+  border: 1px solid rgba(230, 233, 230, 0.35);
+  background: rgba(28, 36, 33, 0.85);
+  color: var(--stone);
+  font-size: 1.5rem;
+  line-height: 1;
+  padding: 0;
+  cursor: pointer;
+}
+
+.image-lightbox-figure {
+  margin: 0;
+  max-width: min(96vw, 1400px);
+  max-height: calc(100vh - 2.5rem);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.65rem;
+  cursor: default;
+}
+
+.image-lightbox-figure img {
+  display: block;
+  max-width: 100%;
+  max-height: calc(100vh - 5.5rem);
+  width: auto;
+  height: auto;
+  object-fit: contain;
+  border-radius: 8px;
+  box-shadow: 0 18px 48px rgba(0, 0, 0, 0.35);
+  background: #111;
+}
+
+.image-lightbox-figure figcaption {
+  max-width: min(40rem, 90vw);
+  color: var(--stone);
+  text-align: center;
+  font-size: 0.95rem;
+  line-height: 1.4;
+  overflow-wrap: anywhere;
+}
+
+.image-caption {
+  flex: 0 0 auto;
+  padding: 0.45rem 0.55rem;
   display: grid;
   gap: 0.35rem;
+  border-top: 1px solid var(--border);
+  background: color-mix(in srgb, var(--stone) 55%, white);
+  font-size: 0.9rem;
+  line-height: 1.35;
+  overflow-wrap: anywhere;
+  word-break: break-word;
+}
+
+.image-caption input {
+  width: 100%;
+}
+
+.image-panel-actions {
+  flex: 0 0 auto;
+}
+
+/* Keep image panels from collapsing to a crop strip inside the grid */
+.panel-grid-item .panel-body:has(.image-panel) {
+  display: flex;
+  flex-direction: column;
+}
+
+.panel-grid-item .panel-body:has(.image-panel) > .image-panel {
+  flex: 1;
+  min-height: 0;
 }
 
 .map-stage {
@@ -300,6 +443,9 @@ label.buttonish {
   background: transparent;
   display: grid;
   gap: 0.15rem;
+  white-space: normal;
+  overflow-wrap: anywhere;
+  word-break: break-word;
 }
 
 .timeline-list button.active {
@@ -359,20 +505,55 @@ label.buttonish {
   overflow: auto;
 }
 
-.module-rail button {
-  display: block;
+.module-rail-item {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
   width: 100%;
   text-align: left;
   margin-bottom: 0.35rem;
   background: transparent;
-  border: none;
+  border: 1px solid transparent;
   padding: 0.55rem 0.65rem;
   border-radius: 8px;
+  cursor: grab;
 }
 
-.module-rail button.active {
+.module-rail-item .module-drag-handle {
+  color: var(--muted);
+  font-size: 0.8rem;
+  line-height: 1;
+  flex: 0 0 auto;
+}
+
+.module-rail-item .module-label {
+  min-width: 0;
+  overflow-wrap: anywhere;
+  word-break: break-word;
+  line-height: 1.25;
+}
+
+.module-rail-item.active {
   background: var(--moss);
   color: #f5f8f6;
+}
+
+.module-rail-item.active .module-drag-handle {
+  color: color-mix(in srgb, #f5f8f6 70%, transparent);
+}
+
+.module-rail-item.dragging {
+  opacity: 0.55;
+  cursor: grabbing;
+}
+
+.module-rail-item.drop-target {
+  border-color: var(--moss);
+  background: color-mix(in srgb, var(--moss) 12%, var(--panel));
+}
+
+.module-rail-item.drop-target.active {
+  background: color-mix(in srgb, var(--moss) 85%, white);
 }
 
 .element-list {
@@ -406,6 +587,10 @@ label.buttonish {
   background: transparent;
   padding: 0.55rem 0.6rem;
   border-radius: 6px;
+  white-space: normal;
+  overflow-wrap: anywhere;
+  word-break: break-word;
+  line-height: 1.3;
 }
 
 .element-list li button.active {
@@ -513,6 +698,13 @@ label.buttonish {
   padding: 1rem;
   text-align: left;
   transition: transform 0.15s ease, box-shadow 0.15s ease;
+  min-width: 0;
+}
+
+.project-card h3,
+.project-card p {
+  overflow-wrap: anywhere;
+  word-break: break-word;
 }
 
 .project-card:hover {
@@ -522,6 +714,10 @@ label.buttonish {
 
 .panel-canvas {
   position: relative;
+  min-height: 70vh;
+}
+
+.panel-grid {
   min-height: 70vh;
 }
 
@@ -539,7 +735,16 @@ label.buttonish {
   font-family: var(--font-body);
 }
 
-.react-grid-item {
+.panel-grid-item {
+  touch-action: none;
+}
+
+.panel-grid-item.is-dragging {
+  opacity: 0.92;
+  box-shadow: 0 10px 28px rgba(28, 36, 33, 0.12);
+}
+
+.panel-grid-item .panel-card {
   background: var(--panel);
   border: 1px solid var(--border);
   border-radius: 8px;
@@ -547,24 +752,65 @@ label.buttonish {
   display: flex;
   flex-direction: column;
   box-shadow: 0 4px 14px rgba(28, 36, 33, 0.05);
-  /* Keep room for header + at least one input row / textarea */
   min-height: 10.5rem;
+  height: 100%;
+  width: 100%;
+  box-sizing: border-box;
+}
+
+.panel-resize-handle {
+  position: absolute;
+  right: 2px;
+  bottom: 2px;
+  width: 14px;
+  height: 14px;
+  cursor: se-resize;
+  border-radius: 2px;
+  background:
+    linear-gradient(
+      135deg,
+      transparent 0 45%,
+      color-mix(in srgb, var(--ink) 35%, transparent) 45% 55%,
+      transparent 55% 70%,
+      color-mix(in srgb, var(--ink) 35%, transparent) 70% 80%,
+      transparent 80%
+    );
+  z-index: 2;
 }
 
 .panel-header {
   display: flex;
-  align-items: center;
+  align-items: flex-start;
   gap: 0.5rem;
   padding: 0.4rem 0.6rem;
   border-bottom: 1px solid var(--border);
   background: color-mix(in srgb, var(--stone) 70%, white);
-  cursor: grab;
   flex-shrink: 0;
+}
+
+.panel-header .panel-title {
+  flex: 1;
+  min-width: 0;
+  border: none;
+  background: transparent;
+  padding: 0;
+  resize: none;
+  overflow: hidden;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  word-break: break-word;
+  line-height: 1.25;
+  field-sizing: content;
 }
 
 .panel-header .drag-handle {
   color: var(--muted);
   font-size: 0.8rem;
+  line-height: 1.25;
+  padding-top: 0.1rem;
+  cursor: grab;
+  user-select: none;
+  touch-action: none;
 }
 
 .attr-row, .stat-row, .list-row {
@@ -575,10 +821,13 @@ label.buttonish {
 }
 
 .manuscript-layout {
-  display: grid;
-  grid-template-rows: auto 1fr;
-  height: calc(100% - 0.5rem);
+  display: flex;
+  flex-direction: column;
   gap: 0.75rem;
+  min-height: 0;
+  /* Do not force a full-canvas 1fr row — that left a large empty band
+     above the editor surface once TipTap's inner wrapper was removed. */
+  height: auto;
 }
 
 .manuscript-toolbar {
@@ -586,6 +835,42 @@ label.buttonish {
   flex-wrap: wrap;
   gap: 0.5rem;
   align-items: center;
+  position: relative;
+  padding-right: 2.25rem;
+  flex: 0 0 auto;
+}
+
+.manuscript-toolbar .tip-hint {
+  position: absolute;
+  top: 0;
+  right: 0;
+  margin: 0;
+}
+
+.tip-hint {
+  flex: 0 0 auto;
+  width: 1.7rem;
+  height: 1.7rem;
+  padding: 0;
+  border-radius: 999px;
+  border: 1px solid var(--border);
+  background: var(--panel);
+  color: var(--muted);
+  font-family: var(--font-display);
+  font-size: 0.95rem;
+  font-weight: 700;
+  line-height: 1;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  cursor: help;
+}
+
+.tip-hint:hover,
+.tip-hint:focus-visible {
+  color: var(--ink);
+  border-color: var(--moss);
+  background: color-mix(in srgb, var(--moss) 10%, var(--panel));
 }
 
 .editor-surface {
@@ -596,6 +881,7 @@ label.buttonish {
   padding: 1.25rem 1.5rem;
   width: 100%;
   box-sizing: border-box;
+  flex: 1 1 auto;
 }
 
 .ProseMirror {
@@ -607,6 +893,31 @@ label.buttonish {
 }
 
 .ProseMirror p { margin: 0.6em 0; }
+
+.manuscript-wysiwyg {
+  position: relative;
+  outline: none;
+  min-height: 60vh;
+  width: 100%;
+  font-size: 1.05rem;
+  line-height: 1.7;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.manuscript-wysiwyg p { margin: 0.6em 0; }
+
+.manuscript-wysiwyg:empty::before,
+.manuscript-wysiwyg:has(> br:only-child)::before,
+.manuscript-wysiwyg:has(> p:only-child > br:only-child)::before {
+  content: attr(data-placeholder);
+  position: absolute;
+  top: 1.25rem;
+  left: 1.5rem;
+  right: 1.5rem;
+  color: color-mix(in srgb, var(--ink) 35%, transparent);
+  pointer-events: none;
+}
 
 .corkboard-wrap {
   display: grid;
@@ -674,11 +985,18 @@ label.buttonish {
   font-family: var(--font-display);
   font-size: 1rem;
   font-weight: 700;
+  line-height: 1.25;
   padding: 0.2rem 0.25rem;
   width: 100%;
   max-width: 100%;
   min-width: 0;
   box-sizing: border-box;
+  resize: none;
+  overflow: hidden;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  word-break: break-word;
+  field-sizing: content;
 }
 
 .cork-title:focus {
@@ -700,6 +1018,76 @@ label.buttonish {
   background: var(--panel);
   border: 1px solid var(--border);
   border-radius: 10px;
+  overflow: hidden;
+  position: relative;
+  touch-action: none;
+  cursor: grab;
+}
+
+.relationship-canvas:active {
+  cursor: grabbing;
+}
+
+.relationship-world {
+  position: relative;
+  will-change: transform;
+}
+
+.relationship-edges {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  overflow: visible;
+}
+
+.relationship-node {
+  position: absolute;
+  display: flex;
+  align-items: center;
+  gap: 0.35rem;
+  padding: 0.45rem 0.65rem;
+  padding-right: 1.35rem;
+  box-sizing: border-box;
+  background: #fff;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  font-family: var(--font-display);
+  font-size: 0.95rem;
+  box-shadow: 0 4px 14px rgba(28, 36, 33, 0.06);
+  cursor: grab;
+  user-select: none;
+  touch-action: none;
+}
+
+.relationship-node:active {
+  cursor: grabbing;
+}
+
+.relationship-node-label {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  min-width: 0;
+  flex: 1;
+}
+
+.relationship-port {
+  position: absolute;
+  right: -7px;
+  top: 50%;
+  transform: translateY(-50%);
+  width: 14px;
+  height: 14px;
+  padding: 0;
+  border-radius: 50%;
+  border: 2px solid var(--moss);
+  background: var(--panel);
+  cursor: crosshair;
+  touch-action: none;
+}
+
+.relationship-port:hover {
+  background: color-mix(in srgb, var(--moss) 25%, white);
 }
 
 .muted { color: var(--muted); }
@@ -707,21 +1095,13 @@ label.buttonish {
 .stack { display: grid; gap: 0.65rem; }
 .error { color: var(--danger); }
 
-/* Hover / focus tooltips for self-guided UI */
-[data-tip] {
-  position: relative;
-}
-
-[data-tip]::after {
-  content: attr(data-tip);
-  position: absolute;
-  left: 50%;
-  bottom: calc(100% + 0.45rem);
-  transform: translateX(-50%) translateY(0.15rem);
-  z-index: 40;
+/* Hover / focus tooltips — rendered by TipHost portal (not clipped by overflow) */
+.tavern-tip {
+  position: fixed;
+  z-index: 10000;
   width: max-content;
-  max-width: min(16rem, 70vw);
-  padding: 0.4rem 0.55rem;
+  max-width: min(18rem, calc(100vw - 1.25rem));
+  padding: 0.45rem 0.6rem;
   border-radius: 6px;
   background: var(--ink);
   color: var(--stone);
@@ -732,39 +1112,8 @@ label.buttonish {
   line-height: 1.35;
   text-align: left;
   white-space: normal;
-  opacity: 0;
-  pointer-events: none;
-  transition: opacity 0.12s ease, transform 0.12s ease;
+  pointer-events: auto;
   box-shadow: 0 8px 20px rgba(28, 36, 33, 0.18);
-}
-
-[data-tip]:hover::after,
-[data-tip]:focus-visible::after {
-  opacity: 1;
-  transform: translateX(-50%) translateY(0);
-}
-
-[data-tip].tip-below::after {
-  bottom: auto;
-  top: calc(100% + 0.45rem);
-  transform: translateX(-50%) translateY(-0.15rem);
-}
-
-[data-tip].tip-below:hover::after,
-[data-tip].tip-below:focus-visible::after {
-  transform: translateX(-50%) translateY(0);
-}
-
-[data-tip].tip-right::after {
-  left: calc(100% + 0.45rem);
-  bottom: auto;
-  top: 50%;
-  transform: translate(0.15rem, -50%);
-}
-
-[data-tip].tip-right:hover::after,
-[data-tip].tip-right:focus-visible::after {
-  transform: translate(0, -50%);
 }
 
 .module-rail {
@@ -934,16 +1283,5 @@ label.buttonish {
   .manuscript-toolbar input {
     max-width: none !important;
     width: 100%;
-  }
-}
-
-/* Prefer hover tips on fine pointers; avoid sticky fake tooltips on touch */
-@media (hover: none) {
-  [data-tip]:hover::after {
-    opacity: 0;
-  }
-
-  [data-tip]:focus-visible::after {
-    opacity: 1;
   }
 }

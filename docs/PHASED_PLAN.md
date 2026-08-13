@@ -6,6 +6,7 @@
 - [x] Auth + project ACL
 - [x] Panel engine + React shell
 - [x] Manuscript TipTap editor
+- [x] Manuscript TipTap → bespoke contentEditable (slim stack Phase 1) — see [SLIM_STACK.md](./SLIM_STACK.md)
 - [x] v1 modules
 - [x] Export + `.tavern` backup
 - [x] Import scaffold (intermediate JSON / zip / opaque stubs)
@@ -27,4 +28,11 @@
 - [x] Corkboard drag layout, inline rename, undo/redo/reset
 - [x] Next module batch: Species, Cultures, Items, Arcs, Languages, Religions
 - [x] Module batch: Research, Philosophies, Calendar
+- [x] Slim stack Phases 0–1 (allowlist + TipTap removal) — [SLIM_STACK.md](./SLIM_STACK.md)
+- [x] Slim stack Phase 2 (PanelGrid replaces react-grid-layout) — [SLIM_STACK.md](./SLIM_STACK.md)
+- [x] Slim stack Phase 3 (bespoke relationship graph + corkboard drag perf) — [SLIM_STACK.md](./SLIM_STACK.md)
+- [x] Slim stack Phase 4 (bespoke router, react-router removed) — [SLIM_STACK.md](./SLIM_STACK.md)
+- [x] Slim stack Phase 5 (Campfire HTML without regex/once_cell) — [SLIM_STACK.md](./SLIM_STACK.md)
+- [x] Slim stack Phase 6 (deny / npm audit / Renovate allowlist) — [SLIM_STACK.md](./SLIM_STACK.md)
+- [x] Optimization + bug-hunt pass (auth IDOR, SVG XSS, race/blur fixes, WAL, wikilink panels)
 - [ ] **Albion / Debian nginx cutover** — planned in [DEBIAN_CUTOVER.md](DEBIAN_CUTOVER.md); not executed yet. Keep the watch list there updated when deploy surface changes. Private host details → gitignored `docs/homelab.md` (see `homelab.md.example`).
