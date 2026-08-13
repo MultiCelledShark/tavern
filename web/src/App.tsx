@@ -49,6 +49,14 @@ export default function App() {
     setUser(null);
   }
 
+  function vaultUnlocked() {
+    setVaultReady(true);
+    api
+      .me()
+      .then(setUser)
+      .catch(() => undefined);
+  }
+
   if (loading) {
     return (
       <div className="login-page">
@@ -63,7 +71,7 @@ export default function App() {
   if (path === "/login") {
     page = user ? (
       locked ? (
-        <UnlockPage user={user} onReady={() => setVaultReady(true)} onLogout={logout} />
+        <UnlockPage user={user} onReady={vaultUnlocked} onLogout={logout} />
       ) : (
         <Navigate to={safeNext(window.location.search)} replace />
       )
@@ -86,14 +94,14 @@ export default function App() {
   } else if (path.startsWith("/invite/")) {
     page =
       locked && user ? (
-        <UnlockPage user={user} onReady={() => setVaultReady(true)} onLogout={logout} />
+        <UnlockPage user={user} onReady={vaultUnlocked} onLogout={logout} />
       ) : (
         <InvitePage user={user} />
       );
   } else if (path === "/" || path === "") {
     page = user ? (
       locked ? (
-        <UnlockPage user={user} onReady={() => setVaultReady(true)} onLogout={logout} />
+        <UnlockPage user={user} onReady={vaultUnlocked} onLogout={logout} />
       ) : (
         <ProjectsPage user={user} onLogout={logout} />
       )
@@ -103,7 +111,7 @@ export default function App() {
   } else if (path === "/users") {
     page = user?.is_admin ? (
       locked ? (
-        <UnlockPage user={user} onReady={() => setVaultReady(true)} onLogout={logout} />
+        <UnlockPage user={user} onReady={vaultUnlocked} onLogout={logout} />
       ) : (
         <UsersPage user={user} onLogout={logout} />
       )
@@ -113,7 +121,7 @@ export default function App() {
   } else if (path.startsWith("/project/")) {
     page = user ? (
       locked ? (
-        <UnlockPage user={user} onReady={() => setVaultReady(true)} onLogout={logout} />
+        <UnlockPage user={user} onReady={vaultUnlocked} onLogout={logout} />
       ) : (
         <ProjectWorkspace user={user} onLogout={logout} />
       )

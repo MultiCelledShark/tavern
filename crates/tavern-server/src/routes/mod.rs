@@ -465,6 +465,8 @@ async fn put_vault(
     let raw = body.crypto_json.to_string();
     validate_crypto_json(&raw)?;
     state.db.set_crypto_json(user.id, &raw).await?;
+    // Session cache may still have has_vault=false from login; drop it so /me refreshes.
+    state.sessions.remove_user(user.id);
     Ok(StatusCode::NO_CONTENT)
 }
 

@@ -4,6 +4,22 @@ export const TEXT_PREFIX = "tv1.";
 export const ASSET_MAGIC = new Uint8Array([0x54, 0x56, 0x31, 0x00]); // TV1\0
 const PBKDF2_ITERS = 210_000;
 
+/** Web Crypto (PBKDF2 / AES-GCM / ECDH) is only available in a secure context. */
+export function vaultCryptoAvailable(): boolean {
+  return typeof globalThis.crypto?.subtle?.generateKey === "function";
+}
+
+export function requireVaultCrypto(): void {
+  if (vaultCryptoAvailable()) return;
+  const host = typeof location !== "undefined" ? location.hostname : "";
+  const viaIp = /^\d{1,3}(\.\d{1,3}){3}$/.test(host) || host.includes(":");
+  throw new Error(
+    viaIp
+      ? "Vault crypto needs a secure browser context. Open Tavern via http://127.0.0.1 on this machine, or serve it over HTTPS — plain HTTP to a LAN IP cannot create or unlock a vault."
+      : "Vault crypto is unavailable in this browser context. Use HTTPS (or http://127.0.0.1 on the host) and try again."
+  );
+}
+
 export type VaultEnvelope = {
   v: 1;
   kdf: "pbkdf2-sha256";
@@ -157,6 +173,7 @@ async function unwrapRawKey(wrapKey: CryptoKey, packed: string): Promise<Uint8Ar
 export async function createVault(
   password: string
 ): Promise<{ envelope: VaultEnvelope; recoveryKey: string; unlocked: Omit<UnlockedVault, "userId"> }> {
+  requireVaultCrypto();
   const vaultRaw = randomBytes(32);
   const recoveryRaw = randomBytes(16);
   const pwSalt = randomBytes(16);
@@ -191,6 +208,7 @@ export async function unlockWithPassword(
   envelope: VaultEnvelope,
   password: string
 ): Promise<Omit<UnlockedVault, "userId">> {
+  requireVaultCrypto();
   const pwKey = await pbkdf2(te.encode(password), unb64(envelope.pw_salt), envelope.iterations);
   return finishUnlock(envelope, await unwrapRawKey(pwKey, envelope.vault_pw));
 }
@@ -199,6 +217,7 @@ export async function unlockWithRecovery(
   envelope: VaultEnvelope,
   recoveryKey: string
 ): Promise<Omit<UnlockedVault, "userId">> {
+  requireVaultCrypto();
   const rkKey = await pbkdf2(parseRecoveryKey(recoveryKey), unb64(envelope.rk_salt), envelope.iterations);
   return finishUnlock(envelope, await unwrapRawKey(rkKey, envelope.vault_rk));
 }

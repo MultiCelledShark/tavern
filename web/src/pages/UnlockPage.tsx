@@ -1,7 +1,12 @@
 import { FormEvent, useState } from "react";
 import { api, User } from "../api/client";
 import RecoveryKey from "../components/RecoveryKey";
-import { createVault, parseEnvelope, unlockWithPassword } from "../crypto/vault";
+import {
+  createVault,
+  parseEnvelope,
+  unlockWithPassword,
+  vaultCryptoAvailable,
+} from "../crypto/vault";
 import { setVault } from "../crypto/session";
 
 export default function UnlockPage({
@@ -19,6 +24,7 @@ export default function UnlockPage({
   const [recoveryKey, setRecoveryKey] = useState<string | null>(null);
 
   const needsSetup = !user.has_vault;
+  const cryptoOk = vaultCryptoAvailable();
 
   async function submit(e: FormEvent) {
     e.preventDefault();
@@ -41,8 +47,13 @@ export default function UnlockPage({
       const unlocked = await unlockWithPassword(envelope, password);
       setVault({ userId: user.id, ...unlocked });
       onReady();
-    } catch {
-      setError(needsSetup ? "Could not create a vault." : "Wrong password, or vault is damaged.");
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : null;
+      if (msg && !/wrong password|operationerror|decrypt/i.test(msg)) {
+        setError(msg);
+      } else {
+        setError(needsSetup ? "Could not create a vault." : "Wrong password, or vault is damaged.");
+      }
     } finally {
       setBusy(false);
     }
@@ -70,6 +81,13 @@ export default function UnlockPage({
             ? "Your stories are encrypted in the browser. The server only stores ciphertext. You’ll get a recovery key next — we cannot reset that for you."
             : "This tab doesn’t have your vault key. Enter your password to unwrap it. We never send the key to the server."}
         </p>
+        {!cryptoOk && (
+          <div className="error">
+            Vault crypto needs a secure browser context. Open Tavern via{" "}
+            <code>http://127.0.0.1</code> on this machine, or serve it over HTTPS — plain HTTP to a
+            LAN IP cannot create or unlock a vault.
+          </div>
+        )}
         <form onSubmit={submit}>
           <label>
             Password
@@ -80,10 +98,11 @@ export default function UnlockPage({
               autoComplete={needsSetup ? "new-password" : "current-password"}
               minLength={needsSetup ? 12 : undefined}
               required
+              disabled={!cryptoOk}
             />
           </label>
           {error && <div className="error">{error}</div>}
-          <button className="primary" disabled={busy}>
+          <button className="primary" disabled={busy || !cryptoOk}>
             {busy ? "Working…" : needsSetup ? "Create vault" : "Unlock"}
           </button>
         </form>

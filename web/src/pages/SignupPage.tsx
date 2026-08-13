@@ -1,7 +1,7 @@
 import { FormEvent, useState } from "react";
 import { api } from "../api/client";
 import RecoveryKey from "../components/RecoveryKey";
-import { createVault } from "../crypto/vault";
+import { createVault, vaultCryptoAvailable } from "../crypto/vault";
 import { Link } from "../lib/router";
 
 export default function SignupPage() {
@@ -12,6 +12,7 @@ export default function SignupPage() {
   const [done, setDone] = useState(false);
   const [busy, setBusy] = useState(false);
   const [recoveryKey, setRecoveryKey] = useState<string | null>(null);
+  const cryptoOk = vaultCryptoAvailable();
 
   async function submit(e: FormEvent) {
     e.preventDefault();
@@ -60,6 +61,13 @@ export default function SignupPage() {
               Create an account. Writing is encrypted in your browser. We’ll email a link to confirm
               your address — never your recovery key.
             </p>
+            {!cryptoOk && (
+              <div className="error">
+                Vault crypto needs a secure browser context. Open Tavern via{" "}
+                <code>http://127.0.0.1</code> on this machine, or serve it over HTTPS before signing
+                up.
+              </div>
+            )}
             <form onSubmit={submit}>
               <label>
                 Username
@@ -70,6 +78,7 @@ export default function SignupPage() {
                   minLength={3}
                   maxLength={32}
                   required
+                  disabled={!cryptoOk}
                 />
               </label>
               <label>
@@ -80,6 +89,7 @@ export default function SignupPage() {
                   onChange={(e) => setEmail(e.target.value)}
                   autoComplete="email"
                   required
+                  disabled={!cryptoOk}
                 />
               </label>
               <label>
@@ -91,10 +101,11 @@ export default function SignupPage() {
                   autoComplete="new-password"
                   minLength={12}
                   required
+                  disabled={!cryptoOk}
                 />
               </label>
               {error && <div className="error">{error}</div>}
-              <button className="primary" disabled={busy}>
+              <button className="primary" disabled={busy || !cryptoOk}>
                 {busy ? "Creating…" : "Create account"}
               </button>
             </form>
