@@ -1,9 +1,37 @@
+import {
+  decryptAsset,
+  encryptAsset,
+  encryptText,
+  newProjectKey,
+  unb64,
+  unwrapProjectKey,
+  unwrapProjectKeyWithToken,
+  VaultEnvelope,
+  wrapProjectKey,
+  wrapProjectKeyWithToken,
+} from "../crypto/vault";
+import {
+  cacheBlobUrl,
+  cachedBlobUrl,
+  getProjectKey,
+  getVault,
+  pageForPanel,
+  projectForElement,
+  projectForPage,
+  rememberElementProject,
+  rememberPageProject,
+  rememberPanelPage,
+  setProjectKey,
+} from "../crypto/session";
+import { countWords, openMeta, openText, sealMeta, sealText } from "../crypto/fields";
+
 export type User = {
   id: string;
   username: string;
   is_admin: boolean;
   email?: string;
   email_verified: boolean;
+  has_vault?: boolean;
 };
 
 export type GrantRole = "owner" | "editor" | "viewer";
@@ -17,6 +45,7 @@ export type Project = {
   created_at: string;
   updated_at: string;
   my_role: GrantRole;
+  key_wrap?: string | null;
 };
 
 export function canEditRole(role?: GrantRole) {
@@ -142,24 +171,94 @@ async function req<T>(path: string, init?: RequestInit): Promise<T> {
   return res as unknown as T;
 }
 
+async function openProject(p: Project): Promise<Project> {
+  const vault = getVault();
+  if (p.key_wrap && vault) {
+    try {
+      const key = getProjectKey(p.id) || (await unwrapProjectKey(p.key_wrap, vault.privateKey));
+      setProjectKey(p.id, key);
+      return {
+        ...p,
+        title: await openText(p.id, p.title),
+        synopsis: await openText(p.id, p.synopsis),
+      };
+    } catch {
+      return { ...p, title: "Locked project", synopsis: "" };
+    }
+  }
+  return p;
+}
+
+async function openElement(el: Element): Promise<Element> {
+  rememberElementProject(el.id, el.project_id);
+  return {
+    ...el,
+    title: await openText(el.project_id, el.title),
+    metadata: await openMeta(el.project_id, el.metadata),
+  };
+}
+
+async function openPage(page: Page, projectId: string): Promise<Page> {
+  rememberPageProject(page.id, projectId);
+  return {
+    ...page,
+    title: await openText(projectId, page.title),
+    description: await openText(projectId, page.description),
+  };
+}
+
+async function openPanel(panel: Panel, projectId: string): Promise<Panel> {
+  rememberPanelPage(panel.id, panel.page_id);
+  rememberPageProject(panel.page_id, projectId);
+  return {
+    ...panel,
+    title: await openText(projectId, panel.title),
+    content: await openMeta(projectId, panel.content),
+  };
+}
+
+async function putOwnWrap(projectId: string, projectKey: CryptoKey) {
+  const vault = getVault();
+  if (!vault) return;
+  const wrap = await wrapProjectKey(projectKey, vault.privateKey, vault.publicRaw, vault.publicRaw);
+  await req<void>(`/api/projects/${projectId}/key-wrap`, {
+    method: "PUT",
+    body: JSON.stringify({ wrap }),
+  });
+}
+
 export const api = {
   me: () => req<User>("/api/auth/me"),
   authConfig: () => req<{ signup: boolean }>("/api/auth/config"),
   login: (username: string, password: string) =>
-    req<{ user: User }>("/api/auth/login", {
+    req<{ user: User; vault?: VaultEnvelope | null }>("/api/auth/login", {
       method: "POST",
       body: JSON.stringify({ username, password }),
     }),
-  signup: (body: { username: string; email: string; password: string }) =>
-    req<void>("/api/auth/signup", { method: "POST", body: JSON.stringify(body) }),
+  signup: (body: {
+    username: string;
+    email: string;
+    password: string;
+    crypto_json?: VaultEnvelope;
+  }) => req<void>("/api/auth/signup", { method: "POST", body: JSON.stringify(body) }),
   verifyEmail: (token: string) =>
     req<void>("/api/auth/verify", { method: "POST", body: JSON.stringify({ token }) }),
   resendVerify: (email: string) =>
     req<void>("/api/auth/resend", { method: "POST", body: JSON.stringify({ email }) }),
   forgotPassword: (email: string) =>
     req<void>("/api/auth/forgot", { method: "POST", body: JSON.stringify({ email }) }),
-  resetPassword: (token: string, password: string) =>
-    req<void>("/api/auth/reset", { method: "POST", body: JSON.stringify({ token, password }) }),
+  resetPassword: (token: string, password: string, crypto_json?: VaultEnvelope) =>
+    req<void>("/api/auth/reset", {
+      method: "POST",
+      body: JSON.stringify({ token, password, crypto_json }),
+    }),
+  getVault: () => req<{ vault: VaultEnvelope | null }>("/api/auth/vault"),
+  putVault: (crypto_json: VaultEnvelope) =>
+    req<void>("/api/auth/vault", { method: "PUT", body: JSON.stringify({ crypto_json }) }),
+  resetVault: (token: string) =>
+    req<{ vault: VaultEnvelope | null }>(`/api/auth/reset-vault?token=${encodeURIComponent(token)}`),
+  cryptoPubkey: (username: string) =>
+    req<{ user_id: string; pub: string }>(`/api/crypto/pubkey/${encodeURIComponent(username)}`),
   listUsers: () => req<User[]>("/api/users"),
   createUser: (body: {
     username: string;
@@ -168,50 +267,118 @@ export const api = {
     is_admin?: boolean;
   }) => req<User>("/api/users", { method: "POST", body: JSON.stringify(body) }),
   logout: () => req<void>("/api/auth/logout", { method: "POST" }),
-  projects: () => req<Project[]>("/api/projects"),
-  createProject: (title: string, synopsis = "") =>
-    req<Project>("/api/projects", {
+  projects: async () => {
+    const rows = await req<Project[]>("/api/projects");
+    return Promise.all(rows.map(openProject));
+  },
+  createProject: async (title: string, synopsis = "") => {
+    const vault = getVault();
+    let key: CryptoKey | undefined;
+    let sendTitle = title;
+    let sendSynopsis = synopsis;
+    if (vault) {
+      key = await newProjectKey();
+      sendTitle = await encryptText(key, title);
+      sendSynopsis = await encryptText(key, synopsis);
+    }
+    const p = await req<Project>("/api/projects", {
       method: "POST",
-      body: JSON.stringify({ title, synopsis }),
-    }),
-  getProject: (id: string) => req<Project>(`/api/projects/${id}`),
-  updateProject: (id: string, body: { title: string; synopsis: string; theme_json?: object }) =>
-    req<Project>(`/api/projects/${id}`, { method: "PUT", body: JSON.stringify(body) }),
-  deleteProject: (id: string) =>
-    req<void>(`/api/projects/${id}`, { method: "DELETE" }),
-  elements: (projectId: string, module?: ModuleType) =>
-    req<Element[]>(
+      body: JSON.stringify({ title: sendTitle, synopsis: sendSynopsis }),
+    });
+    if (key) {
+      setProjectKey(p.id, key);
+      await putOwnWrap(p.id, key);
+    }
+    return { ...p, title, synopsis };
+  },
+  getProject: async (id: string) => openProject(await req<Project>(`/api/projects/${id}`)),
+  updateProject: async (id: string, body: { title: string; synopsis: string; theme_json?: object }) => {
+    const p = await req<Project>(`/api/projects/${id}`, {
+      method: "PUT",
+      body: JSON.stringify({
+        ...body,
+        title: await sealText(id, body.title),
+        synopsis: await sealText(id, body.synopsis),
+      }),
+    });
+    return openProject(p);
+  },
+  deleteProject: (id: string) => req<void>(`/api/projects/${id}`, { method: "DELETE" }),
+  elements: async (projectId: string, module?: ModuleType) => {
+    const rows = await req<Element[]>(
       `/api/projects/${projectId}/elements${module ? `?module=${module}` : ""}`
-    ),
-  createElement: (
+    );
+    return Promise.all(rows.map(openElement));
+  },
+  createElement: async (
     projectId: string,
     body: { module_type: ModuleType; title: string; parent_id?: string; metadata?: object }
-  ) =>
-    req<Element>(`/api/projects/${projectId}/elements`, {
+  ) => {
+    const el = await req<Element>(`/api/projects/${projectId}/elements`, {
       method: "POST",
-      body: JSON.stringify(body),
-    }),
-  updateElement: (
+      body: JSON.stringify({
+        ...body,
+        title: await sealText(projectId, body.title),
+        metadata: await sealMeta(projectId, (body.metadata as Record<string, unknown>) || {}),
+      }),
+    });
+    return openElement(el);
+  },
+  updateElement: async (
     id: string,
     body: { title: string; parent_id: string | null; sort_order: number; metadata: object }
-  ) => req<Element>(`/api/elements/${id}`, { method: "PUT", body: JSON.stringify(body) }),
+  ) => {
+    const projectId =
+      projectForElement(id) || (await req<Element>(`/api/elements/${id}`)).project_id;
+    rememberElementProject(id, projectId);
+    const el = await req<Element>(`/api/elements/${id}`, {
+      method: "PUT",
+      body: JSON.stringify({
+        ...body,
+        title: await sealText(projectId, body.title),
+        metadata: await sealMeta(projectId, body.metadata as Record<string, unknown>),
+      }),
+    });
+    return openElement(el);
+  },
   deleteElement: (id: string) => req<void>(`/api/elements/${id}`, { method: "DELETE" }),
-  pages: (elementId: string) => req<Page[]>(`/api/elements/${elementId}/pages`),
-  createPage: (elementId: string, title: string) =>
-    req<Page>(`/api/elements/${elementId}/pages`, {
+  pages: async (elementId: string) => {
+    const projectId =
+      projectForElement(elementId) || (await req<Element>(`/api/elements/${elementId}`)).project_id;
+    const rows = await req<Page[]>(`/api/elements/${elementId}/pages`);
+    return Promise.all(rows.map((p) => openPage(p, projectId)));
+  },
+  createPage: async (elementId: string, title: string) => {
+    const projectId =
+      projectForElement(elementId) || (await req<Element>(`/api/elements/${elementId}`)).project_id;
+    const page = await req<Page>(`/api/elements/${elementId}/pages`, {
       method: "POST",
-      body: JSON.stringify({ title }),
-    }),
-  panels: (pageId: string) => req<Panel[]>(`/api/pages/${pageId}/panels`),
-  createPanel: (
+      body: JSON.stringify({ title: await sealText(projectId, title) }),
+    });
+    return openPage(page, projectId);
+  },
+  panels: async (pageId: string) => {
+    const rows = await req<Panel[]>(`/api/pages/${pageId}/panels`);
+    const projectId = projectForPage(pageId);
+    if (!projectId) return rows;
+    return Promise.all(rows.map((p) => openPanel(p, projectId)));
+  },
+  createPanel: async (
     pageId: string,
     body: { panel_type: string; title: string; content?: object; layout?: PanelLayout; sort_order?: number }
-  ) =>
-    req<Panel>(`/api/pages/${pageId}/panels`, {
+  ) => {
+    const projectId = projectForPage(pageId);
+    const panel = await req<Panel>(`/api/pages/${pageId}/panels`, {
       method: "POST",
-      body: JSON.stringify(body),
-    }),
-  updatePanel: (
+      body: JSON.stringify({
+        ...body,
+        title: await sealText(projectId, body.title),
+        content: await sealMeta(projectId, (body.content as Record<string, unknown>) || {}),
+      }),
+    });
+    return projectId ? openPanel(panel, projectId) : panel;
+  },
+  updatePanel: async (
     id: string,
     body: {
       title: string;
@@ -220,74 +387,172 @@ export const api = {
       content: object;
       sort_order: number;
     }
-  ) => req<Panel>(`/api/panels/${id}`, { method: "PUT", body: JSON.stringify(body) }),
+  ) => {
+    const pageId = pageForPanel(id);
+    const projectId = pageId ? projectForPage(pageId) : undefined;
+    const updated = await req<Panel>(`/api/panels/${id}`, {
+      method: "PUT",
+      body: JSON.stringify({
+        ...body,
+        title: await sealText(projectId, body.title),
+        content: await sealMeta(projectId, body.content as Record<string, unknown>),
+      }),
+    });
+    return projectId ? openPanel(updated, projectId) : updated;
+  },
   deletePanel: (id: string) => req<void>(`/api/panels/${id}`, { method: "DELETE" }),
-  links: (projectId: string) => req<ElementLink[]>(`/api/projects/${projectId}/links`),
-  createLink: (
+  links: async (projectId: string) => {
+    const rows = await req<ElementLink[]>(`/api/projects/${projectId}/links`);
+    return Promise.all(
+      rows.map(async (l) => ({
+        ...l,
+        label: await openText(projectId, l.label),
+        metadata: await openMeta(projectId, l.metadata),
+      }))
+    );
+  },
+  createLink: async (
     projectId: string,
     body: { from_element_id: string; to_element_id: string; label?: string; link_type?: string }
-  ) =>
-    req<ElementLink>(`/api/projects/${projectId}/links`, {
+  ) => {
+    const l = await req<ElementLink>(`/api/projects/${projectId}/links`, {
       method: "POST",
-      body: JSON.stringify(body),
-    }),
+      body: JSON.stringify({
+        ...body,
+        label: await sealText(projectId, body.label || ""),
+      }),
+    });
+    return { ...l, label: body.label || "" };
+  },
   deleteLink: (id: string) => req<void>(`/api/links/${id}`, { method: "DELETE" }),
-  manuscript: (elementId: string) =>
-    req<ManuscriptBody>(`/api/elements/${elementId}/manuscript`),
+  manuscript: async (elementId: string) => {
+    const el = await req<Element>(`/api/elements/${elementId}`);
+    const body = await req<ManuscriptBody>(`/api/elements/${elementId}/manuscript`);
+    const markdown = await openText(el.project_id, body.markdown);
+    return { ...body, markdown, word_count: countWords(markdown) };
+  },
   saveManuscript: async (
     elementId: string,
     markdown: string,
     word_goal: number | undefined,
     updated_at?: string
   ) => {
+    const el = await req<Element>(`/api/elements/${elementId}`);
     const res = await fetch(`/api/elements/${elementId}/manuscript`, {
       method: "PUT",
       credentials: "include",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ markdown, word_goal, updated_at }),
+      body: JSON.stringify({
+        markdown: await sealText(el.project_id, markdown),
+        word_goal,
+        updated_at,
+      }),
     });
     const body = (await res.json().catch(() => ({}))) as ManuscriptBody & { error?: string };
     if (res.status === 409) {
-      throw new ConflictError(body);
+      const md = await openText(el.project_id, body.markdown);
+      throw new ConflictError({ ...body, markdown: md, word_count: countWords(md) });
     }
     if (!res.ok) {
       throw new Error(body.error || res.statusText);
     }
-    return body as ManuscriptBody;
+    const md = await openText(el.project_id, body.markdown);
+    return { ...body, markdown: md, word_count: countWords(md) } as ManuscriptBody;
   },
   grants: (projectId: string) => req<ProjectGrant[]>(`/api/projects/${projectId}/grants`),
-  createInvite: (projectId: string, role: string) =>
-    req<{ token: string; invite: { id: string; role: string; expires_at: string } }>(
+  createInvite: async (projectId: string, role: string) => {
+    const res = await req<{ token: string; invite: { id: string; role: string; expires_at: string } }>(
       `/api/projects/${projectId}/invites`,
       { method: "POST", body: JSON.stringify({ role }) }
-    ),
-  acceptInvite: (token: string) =>
-    req<{ project_id: string; role: string }>("/api/invites/accept", {
-      method: "POST",
-      body: JSON.stringify({ token }),
-    }),
-  upsertGrant: (projectId: string, body: { username?: string; user_id?: string; role: string }) =>
-    req<void>(`/api/projects/${projectId}/grants`, {
+    );
+    const key = getProjectKey(projectId);
+    if (key) {
+      const wrap = await wrapProjectKeyWithToken(key, res.token);
+      await req<void>(`/api/projects/${projectId}/invites/${res.invite.id}/key-wrap`, {
+        method: "PUT",
+        body: JSON.stringify({ wrap }),
+      });
+    }
+    return res;
+  },
+  acceptInvite: async (token: string) => {
+    const res = await req<{ project_id: string; role: string; key_wrap?: string | null }>(
+      "/api/invites/accept",
+      { method: "POST", body: JSON.stringify({ token }) }
+    );
+    if (res.key_wrap) {
+      try {
+        const key = await unwrapProjectKeyWithToken(res.key_wrap, token);
+        setProjectKey(res.project_id, key);
+        await putOwnWrap(res.project_id, key);
+      } catch {
+        /* invite had no usable wrap */
+      }
+    }
+    return res;
+  },
+  upsertGrant: async (
+    projectId: string,
+    body: { username?: string; user_id?: string; role: string }
+  ) => {
+    await req<void>(`/api/projects/${projectId}/grants`, {
       method: "POST",
       body: JSON.stringify(body),
-    }),
+    });
+    const key = getProjectKey(projectId);
+    const vault = getVault();
+    if (!key || !vault || !body.username) return;
+    try {
+      const { pub } = await api.cryptoPubkey(body.username);
+      const wrap = await wrapProjectKey(key, vault.privateKey, vault.publicRaw, unb64(pub));
+      await req<void>(`/api/projects/${projectId}/key-wrap`, {
+        method: "PUT",
+        body: JSON.stringify({ wrap, username: body.username }),
+      });
+    } catch {
+      /* no vault on that user, or unknown username */
+    }
+  },
   deleteGrant: (projectId: string, userId: string) =>
     req<void>(`/api/projects/${projectId}/grants/${userId}`, { method: "DELETE" }),
   listAssets: (projectId: string) => req<AssetInfo[]>(`/api/projects/${projectId}/assets`),
   uploadAsset: async (projectId: string, file: File) => {
+    const key = getProjectKey(projectId);
+    let blob: Blob = file;
+    if (key) {
+      blob = await encryptAsset(key, await file.arrayBuffer());
+    }
     const fd = new FormData();
-    fd.append("file", file);
+    fd.append("file", new File([blob], file.name, { type: file.type || "application/octet-stream" }));
     return req<AssetInfo>(`/api/projects/${projectId}/assets`, {
       method: "POST",
       body: fd,
       headers: {},
     });
   },
+  resolveAsset: async (projectId: string, url: string) => {
+    if (!url || url.startsWith("blob:") || url.startsWith("data:")) return url;
+    const key = getProjectKey(projectId);
+    if (!key || !url.startsWith("/api/")) return url;
+    const hit = cachedBlobUrl(url);
+    if (hit) return hit;
+    const res = await fetch(url, { credentials: "include" });
+    if (!res.ok) return url;
+    const buf = await res.arrayBuffer();
+    const dec = await decryptAsset(key, buf);
+    const blobUrl = URL.createObjectURL(new Blob([dec]));
+    cacheBlobUrl(url, blobUrl);
+    return blobUrl;
+  },
   deleteAsset: (projectId: string, name: string) =>
     req<void>(`/api/projects/${projectId}/assets/${encodeURIComponent(name)}`, {
       method: "DELETE",
     }),
   exportProject: async (projectId: string, format: string, kind = "manuscript") => {
+    if (getProjectKey(projectId)) {
+      const md = await compileLocalMarkdown(projectId, kind);
+      return new Blob([md], { type: "text/markdown;charset=utf-8" });
+    }
     const res = await fetch(`/api/projects/${projectId}/export`, {
       method: "POST",
       credentials: "include",
@@ -308,17 +573,51 @@ export const api = {
   importProject: async (file: File) => {
     const fd = new FormData();
     fd.append("file", file);
-    return req<{ project: Project; report: { notes: string[]; unsupported_modules: string[] } }>(
-      "/api/import",
-      { method: "POST", body: fd, headers: {} }
-    );
+    const res = await req<{
+      project: Project;
+      report: { notes: string[]; unsupported_modules: string[] };
+    }>("/api/import", { method: "POST", body: fd, headers: {} });
+    return { ...res, project: await openProject(res.project) };
   },
-  createTutorial: () =>
-    req<{ project: Project; report: { notes: string[] } }>("/api/projects/tutorial", {
-      method: "POST",
-      body: "{}",
-    }),
+  createTutorial: async () => {
+    const res = await req<{ project: Project; report: { notes: string[] } }>(
+      "/api/projects/tutorial",
+      { method: "POST", body: "{}" }
+    );
+    return { ...res, project: await openProject(res.project) };
+  },
 };
+
+async function compileLocalMarkdown(projectId: string, kind: string): Promise<string> {
+  const project = await api.getProject(projectId);
+  const elements = await api.elements(projectId);
+  const lines: string[] = [`# ${project.title}`, ""];
+  if (project.synopsis) {
+    lines.push(project.synopsis, "");
+  }
+  const want = kind === "bible" ? elements : elements.filter((e) => e.module_type === "manuscript");
+  for (const el of want.sort((a, b) => a.sort_order - b.sort_order)) {
+    lines.push(`## ${el.title}`, "");
+    if (el.module_type === "manuscript") {
+      const body = await api.manuscript(el.id);
+      lines.push(body.markdown, "");
+      continue;
+    }
+    const pages = await api.pages(el.id);
+    for (const page of pages) {
+      lines.push(`### ${page.title}`, "");
+      if (page.description) lines.push(page.description, "");
+      const panels = await api.panels(page.id);
+      for (const panel of panels) {
+        const md = panel.content.markdown;
+        if (typeof md === "string" && md.trim()) lines.push(md, "");
+        const text = panel.content.text;
+        if (typeof text === "string" && text.trim()) lines.push(text, "");
+      }
+    }
+  }
+  return lines.join("\n");
+}
 
 export const MODULES: { id: ModuleType; label: string }[] = [
   { id: "manuscript", label: "Manuscript" },

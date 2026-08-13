@@ -29,7 +29,10 @@ export default function ForgotPage() {
           <p>If that address is on this tavern, you’ll get a message shortly.</p>
         ) : (
           <>
-            <p>We’ll email a reset link if the account exists and is verified.</p>
+            <p>
+              We’ll email a reset link if the account exists and is verified. You’ll still need your
+              recovery key to keep encrypted writing readable — we never store that key.
+            </p>
             <form onSubmit={submit}>
               <label>
                 Email

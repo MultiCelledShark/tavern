@@ -41,6 +41,9 @@ impl Db {
         sqlx::raw_sql(include_str!("migrations/001_init.sql"))
             .execute(&self.pool)
             .await?;
+        sqlx::raw_sql(include_str!("migrations/004_vault.sql"))
+            .execute(&self.pool)
+            .await?;
         Ok(())
     }
 
@@ -145,6 +148,111 @@ impl Db {
             .ok_or_else(|| anyhow!("user missing after create"))
     }
 
+    pub async fn get_crypto_json(&self, user_id: Uuid) -> Result<Option<String>> {
+        let row = sqlx::query("SELECT crypto_json FROM users WHERE id = $1")
+            .bind(user_id.to_string())
+            .fetch_optional(&self.pool)
+            .await?;
+        Ok(row.and_then(|r| r.get::<Option<String>, _>("crypto_json")))
+    }
+
+    pub async fn set_crypto_json(&self, user_id: Uuid, crypto_json: &str) -> Result<()> {
+        sqlx::query("UPDATE users SET crypto_json = $1 WHERE id = $2")
+            .bind(crypto_json)
+            .bind(user_id.to_string())
+            .execute(&self.pool)
+            .await?;
+        Ok(())
+    }
+
+    pub async fn crypto_pub_for_username(&self, username: &str) -> Result<Option<(Uuid, String)>> {
+        let row = sqlx::query("SELECT id, crypto_json FROM users WHERE username = $1")
+            .bind(username)
+            .fetch_optional(&self.pool)
+            .await?;
+        let Some(r) = row else {
+            return Ok(None);
+        };
+        let id = Uuid::parse_str(r.get::<String, _>("id").as_str()).unwrap();
+        let Some(raw) = r.get::<Option<String>, _>("crypto_json") else {
+            return Ok(None);
+        };
+        let v: serde_json::Value = serde_json::from_str(&raw).unwrap_or(serde_json::Value::Null);
+        match v.get("pub").and_then(|p| p.as_str()) {
+            Some(p) if !p.is_empty() => Ok(Some((id, p.to_string()))),
+            _ => Ok(None),
+        }
+    }
+
+    pub async fn peek_email_token(&self, token: &str, purpose: &str) -> Result<Option<Uuid>> {
+        let row = sqlx::query(
+            "SELECT user_id, expires_at FROM email_tokens WHERE token_hash = $1 AND purpose = $2",
+        )
+        .bind(Self::hash_secret(token))
+        .bind(purpose)
+        .fetch_optional(&self.pool)
+        .await?;
+        let Some(r) = row else {
+            return Ok(None);
+        };
+        let expires = parse_dt(r.get::<String, _>("expires_at"));
+        if expires < Utc::now() {
+            return Ok(None);
+        }
+        Ok(Some(Uuid::parse_str(r.get::<String, _>("user_id").as_str()).unwrap()))
+    }
+
+    pub async fn upsert_project_key_wrap(
+        &self,
+        project_id: Uuid,
+        user_id: Uuid,
+        wrap: &str,
+    ) -> Result<()> {
+        sqlx::query(
+            "INSERT INTO project_key_wraps (project_id, user_id, wrap) VALUES ($1, $2, $3)
+             ON CONFLICT(project_id, user_id) DO UPDATE SET wrap = excluded.wrap",
+        )
+        .bind(project_id.to_string())
+        .bind(user_id.to_string())
+        .bind(wrap)
+        .execute(&self.pool)
+        .await?;
+        Ok(())
+    }
+
+    pub async fn get_project_key_wrap(
+        &self,
+        project_id: Uuid,
+        user_id: Uuid,
+    ) -> Result<Option<String>> {
+        let row = sqlx::query(
+            "SELECT wrap FROM project_key_wraps WHERE project_id = $1 AND user_id = $2",
+        )
+        .bind(project_id.to_string())
+        .bind(user_id.to_string())
+        .fetch_optional(&self.pool)
+        .await?;
+        Ok(row.map(|r| r.get("wrap")))
+    }
+
+    pub async fn set_invite_key_wrap(
+        &self,
+        project_id: Uuid,
+        invite_id: Uuid,
+        wrap: &str,
+    ) -> Result<bool> {
+        let r = sqlx::query(
+            "UPDATE project_invites SET key_wrap = $1
+             WHERE id = $2 AND project_id = $3 AND used_at IS NULL",
+        )
+        .bind(wrap)
+        .bind(invite_id.to_string())
+        .bind(project_id.to_string())
+        .execute(&self.pool)
+        .await?;
+        Ok(r.rows_affected() > 0)
+    }
+
     pub async fn set_email(&self, user_id: Uuid, email: Option<&str>, verified: bool) -> Result<()> {
         sqlx::query("UPDATE users SET email = $1, email_verified = $2 WHERE id = $3")
             .bind(email)
@@ -166,7 +274,9 @@ impl Db {
 
     pub async fn get_user(&self, id: Uuid) -> Result<Option<User>> {
         let row = sqlx::query(
-            "SELECT id, username, is_admin, created_at, email, email_verified FROM users WHERE id = $1",
+            "SELECT id, username, is_admin, created_at, email, email_verified,
+                    CASE WHEN crypto_json IS NOT NULL AND length(crypto_json) > 2 THEN 1::bigint ELSE 0::bigint END AS has_vault
+             FROM users WHERE id = $1",
         )
         .bind(id.to_string())
         .fetch_optional(&self.pool)
@@ -176,7 +286,9 @@ impl Db {
 
     pub async fn get_user_by_username(&self, username: &str) -> Result<Option<User>> {
         let row = sqlx::query(
-            "SELECT id, username, is_admin, created_at, email, email_verified FROM users WHERE username = $1",
+            "SELECT id, username, is_admin, created_at, email, email_verified,
+                    CASE WHEN crypto_json IS NOT NULL AND length(crypto_json) > 2 THEN 1::bigint ELSE 0::bigint END AS has_vault
+             FROM users WHERE username = $1",
         )
         .bind(username)
         .fetch_optional(&self.pool)
@@ -186,7 +298,9 @@ impl Db {
 
     pub async fn get_user_by_email(&self, email: &str) -> Result<Option<User>> {
         let row = sqlx::query(
-            "SELECT id, username, is_admin, created_at, email, email_verified FROM users WHERE email = $1",
+            "SELECT id, username, is_admin, created_at, email, email_verified,
+                    CASE WHEN crypto_json IS NOT NULL AND length(crypto_json) > 2 THEN 1::bigint ELSE 0::bigint END AS has_vault
+             FROM users WHERE email = $1",
         )
         .bind(email)
         .fetch_optional(&self.pool)
@@ -204,7 +318,9 @@ impl Db {
 
     pub async fn list_users(&self) -> Result<Vec<User>> {
         let rows = sqlx::query(
-            "SELECT id, username, is_admin, created_at, email, email_verified FROM users ORDER BY username",
+            "SELECT id, username, is_admin, created_at, email, email_verified,
+                    CASE WHEN crypto_json IS NOT NULL AND length(crypto_json) > 2 THEN 1::bigint ELSE 0::bigint END AS has_vault
+             FROM users ORDER BY username",
         )
         .fetch_all(&self.pool)
         .await?;
@@ -237,7 +353,9 @@ impl Db {
     pub async fn user_for_session(&self, token: &str) -> Result<Option<User>> {
         let token_hash = Self::hash_secret(token);
         let row = sqlx::query(
-            "SELECT u.id, u.username, u.is_admin, u.created_at, u.email, u.email_verified, s.expires_at
+            "SELECT u.id, u.username, u.is_admin, u.created_at, u.email, u.email_verified,
+                    CASE WHEN u.crypto_json IS NOT NULL AND length(u.crypto_json) > 2 THEN 1::bigint ELSE 0::bigint END AS has_vault,
+                    s.expires_at
              FROM sessions s JOIN users u ON u.id = s.user_id WHERE s.token = $1",
         )
         .bind(&token_hash)
@@ -407,16 +525,22 @@ impl Db {
         Ok(row.map(|r| map_project(r)))
     }
 
-    pub async fn list_projects_for_user(&self, user: &User) -> Result<Vec<(Project, GrantRole)>> {
+    pub async fn list_projects_for_user(
+        &self,
+        user: &User,
+    ) -> Result<Vec<(Project, GrantRole, Option<String>)>> {
         let uid = user.id.to_string();
         let rows = sqlx::query(
             "SELECT p.id, p.title, p.synopsis, p.owner_id, p.theme_json, p.created_at, p.updated_at,
-                    CASE WHEN p.owner_id = $1 THEN 'owner' ELSE COALESCE(g.role, 'viewer') END AS my_role
+                    CASE WHEN p.owner_id = $1 THEN 'owner' ELSE COALESCE(g.role, 'viewer') END AS my_role,
+                    w.wrap AS key_wrap
              FROM projects p
              LEFT JOIN project_grants g ON g.project_id = p.id AND g.user_id = $2
-             WHERE p.owner_id = $3 OR g.user_id IS NOT NULL
+             LEFT JOIN project_key_wraps w ON w.project_id = p.id AND w.user_id = $3
+             WHERE p.owner_id = $4 OR g.user_id IS NOT NULL
              ORDER BY p.updated_at DESC",
         )
+        .bind(&uid)
         .bind(&uid)
         .bind(&uid)
         .bind(&uid)
@@ -427,7 +551,8 @@ impl Db {
             .map(|r| {
                 let role =
                     GrantRole::parse(&r.get::<String, _>("my_role")).unwrap_or(GrantRole::Viewer);
-                (map_project(r), role)
+                let wrap = r.get::<Option<String>, _>("key_wrap");
+                (map_project(r), role, wrap)
             })
             .collect())
     }
@@ -507,6 +632,11 @@ impl Db {
             .bind(user_id.to_string())
             .execute(&self.pool)
             .await?;
+        sqlx::query("DELETE FROM project_key_wraps WHERE project_id = $1 AND user_id = $2")
+            .bind(project_id.to_string())
+            .bind(user_id.to_string())
+            .execute(&self.pool)
+            .await?;
         Ok(())
     }
 
@@ -571,10 +701,13 @@ impl Db {
         Ok(())
     }
 
-    pub async fn accept_invite(&self, token: &str) -> Result<Option<(Uuid, GrantRole)>> {
+    pub async fn accept_invite(
+        &self,
+        token: &str,
+    ) -> Result<Option<(Uuid, GrantRole, Option<String>)>> {
         let token_hash = Self::hash_secret(token);
         let row = sqlx::query(
-            "SELECT id, project_id, role, expires_at, used_at FROM project_invites WHERE token_hash = $1",
+            "SELECT id, project_id, role, expires_at, used_at, key_wrap FROM project_invites WHERE token_hash = $1",
         )
         .bind(&token_hash)
         .fetch_optional(&self.pool)
@@ -592,12 +725,13 @@ impl Db {
         let invite_id: String = r.get("id");
         let project_id = Uuid::parse_str(r.get::<String, _>("project_id").as_str()).unwrap();
         let role = GrantRole::parse_shareable(&r.get::<String, _>("role")).unwrap_or(GrantRole::Viewer);
+        let key_wrap = r.get::<Option<String>, _>("key_wrap");
         sqlx::query("UPDATE project_invites SET used_at = $1 WHERE id = $2")
             .bind(Utc::now().to_rfc3339())
             .bind(&invite_id)
             .execute(&self.pool)
             .await?;
-        Ok(Some((project_id, role)))
+        Ok(Some((project_id, role, key_wrap)))
     }
 
     pub async fn create_element(
@@ -1156,6 +1290,7 @@ fn map_user(r: PgRow) -> User {
             .get::<Option<String>, _>("email")
             .filter(|s| !s.is_empty()),
         email_verified: r.get::<i64, _>("email_verified") != 0,
+        has_vault: r.try_get::<i64, _>("has_vault").unwrap_or(0) != 0,
         created_at: parse_dt(r.get::<String, _>("created_at")),
     }
 }

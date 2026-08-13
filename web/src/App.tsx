@@ -6,10 +6,12 @@ import SignupPage from "./pages/SignupPage";
 import ForgotPage from "./pages/ForgotPage";
 import ResetPage from "./pages/ResetPage";
 import VerifyPage from "./pages/VerifyPage";
+import UnlockPage from "./pages/UnlockPage";
 import ProjectsPage from "./pages/ProjectsPage";
 import ProjectWorkspace from "./pages/ProjectWorkspace";
 import UsersPage from "./pages/UsersPage";
 import InvitePage from "./pages/InvitePage";
+import { clearVault, getVault, restoreVault } from "./crypto/session";
 
 function safeNext(search: string): string {
   const n = new URLSearchParams(search).get("next");
@@ -20,14 +22,30 @@ function safeNext(search: string): string {
 export default function App() {
   const [user, setUser] = useState<User | null>(null);
   const [loading, setLoading] = useState(true);
+  const [vaultReady, setVaultReady] = useState(false);
 
   useEffect(() => {
     api
       .me()
-      .then(setUser)
-      .catch(() => setUser(null))
+      .then(async (u) => {
+        setUser(u);
+        const restored = await restoreVault(u.id);
+        setVaultReady(!!restored);
+      })
+      .catch(() => {
+        setUser(null);
+        clearVault();
+        setVaultReady(false);
+      })
       .finally(() => setLoading(false));
   }, []);
+
+  async function logout() {
+    await api.logout();
+    clearVault();
+    setVaultReady(false);
+    setUser(null);
+  }
 
   if (loading) {
     return (
@@ -37,15 +55,30 @@ export default function App() {
     );
   }
 
+  const locked = !!user && !vaultReady && !getVault();
+
   return (
     <Routes>
       <Route
         path="/login"
         element={
           user ? (
-            <LoginRedirect />
+            locked ? (
+              <UnlockPage
+                user={user}
+                onReady={() => setVaultReady(true)}
+                onLogout={logout}
+              />
+            ) : (
+              <LoginRedirect />
+            )
           ) : (
-            <LoginPage onLogin={setUser} />
+            <LoginPage
+              onLogin={(u) => {
+                setUser(u);
+                setVaultReady(!!getVault());
+              }}
+            />
           )
         }
       />
@@ -53,18 +86,25 @@ export default function App() {
       <Route path="/forgot" element={user ? <Navigate to="/" replace /> : <ForgotPage />} />
       <Route path="/reset" element={<ResetPage />} />
       <Route path="/verify" element={<VerifyPage />} />
-      <Route path="/invite/:token" element={<InvitePage user={user} />} />
+      <Route
+        path="/invite/:token"
+        element={
+          locked && user ? (
+            <UnlockPage user={user} onReady={() => setVaultReady(true)} onLogout={logout} />
+          ) : (
+            <InvitePage user={user} />
+          )
+        }
+      />
       <Route
         path="/"
         element={
           user ? (
-            <ProjectsPage
-              user={user}
-              onLogout={async () => {
-                await api.logout();
-                setUser(null);
-              }}
-            />
+            locked ? (
+              <UnlockPage user={user} onReady={() => setVaultReady(true)} onLogout={logout} />
+            ) : (
+              <ProjectsPage user={user} onLogout={logout} />
+            )
           ) : (
             <Navigate to="/login" replace />
           )
@@ -74,13 +114,11 @@ export default function App() {
         path="/users"
         element={
           user?.is_admin ? (
-            <UsersPage
-              user={user}
-              onLogout={async () => {
-                await api.logout();
-                setUser(null);
-              }}
-            />
+            locked ? (
+              <UnlockPage user={user} onReady={() => setVaultReady(true)} onLogout={logout} />
+            ) : (
+              <UsersPage user={user} onLogout={logout} />
+            )
           ) : user ? (
             <Navigate to="/" replace />
           ) : (
@@ -92,13 +130,11 @@ export default function App() {
         path="/project/:projectId/*"
         element={
           user ? (
-            <ProjectWorkspace
-              user={user}
-              onLogout={async () => {
-                await api.logout();
-                setUser(null);
-              }}
-            />
+            locked ? (
+              <UnlockPage user={user} onReady={() => setVaultReady(true)} onLogout={logout} />
+            ) : (
+              <ProjectWorkspace user={user} onLogout={logout} />
+            )
           ) : (
             <Navigate to="/login" replace />
           )

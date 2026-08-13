@@ -40,6 +40,17 @@ pub fn router() -> Router<Arc<AppState>> {
         .route("/api/auth/resend", post(resend_verify))
         .route("/api/auth/forgot", post(forgot_password))
         .route("/api/auth/reset", post(reset_password))
+        .route("/api/auth/vault", get(get_vault).put(put_vault))
+        .route("/api/auth/reset-vault", get(reset_vault))
+        .route("/api/crypto/pubkey/{username}", get(crypto_pubkey))
+        .route(
+            "/api/projects/{id}/key-wrap",
+            put(put_project_key_wrap),
+        )
+        .route(
+            "/api/projects/{id}/invites/{invite_id}/key-wrap",
+            put(put_invite_key_wrap),
+        )
         .route("/api/users", get(list_users).post(create_user))
         .route("/api/projects", get(list_projects).post(create_project))
         .route("/api/projects/tutorial", post(create_tutorial_project))
@@ -180,7 +191,11 @@ async fn login(
     if state.config.cookie_secure || state.config.trust_proxy {
         cookie.set_secure(true);
     }
-    Ok((jar.add(cookie), Json(serde_json::json!({ "user": user }))))
+    let vault = state.db.get_crypto_json(user.id).await?;
+    Ok((
+        jar.add(cookie),
+        Json(serde_json::json!({ "user": user, "vault": parse_vault_json(vault) })),
+    ))
 }
 
 async fn logout(
@@ -212,6 +227,7 @@ struct SignupBody {
     username: String,
     email: String,
     password: String,
+    crypto_json: Option<serde_json::Value>,
 }
 
 async fn signup(
@@ -271,6 +287,11 @@ async fn signup(
         .db
         .create_user(body.username.trim(), &body.password, false, Some(&email), false)
         .await?;
+    if let Some(crypto) = body.crypto_json.as_ref() {
+        let raw = crypto.to_string();
+        validate_crypto_json(&raw)?;
+        state.db.set_crypto_json(user.id, &raw).await?;
+    }
     let token = state
         .db
         .issue_email_token(user.id, "verify", chrono::Duration::hours(48))
@@ -377,6 +398,7 @@ async fn forgot_password(
 struct ResetBody {
     token: String,
     password: String,
+    crypto_json: Option<serde_json::Value>,
 }
 
 async fn reset_password(
@@ -392,9 +414,151 @@ async fn reset_password(
     else {
         return Err(ApiError::bad("invalid or expired link"));
     };
+    if let Some(crypto) = body.crypto_json.as_ref() {
+        let raw = crypto.to_string();
+        validate_crypto_json(&raw)?;
+        state.db.set_crypto_json(user_id, &raw).await?;
+    }
     state.db.set_password(user_id, &body.password).await?;
     state.sessions.remove_user(user_id);
     state.db.delete_sessions_for_user(user_id).await?;
+    Ok(StatusCode::NO_CONTENT)
+}
+
+fn parse_vault_json(raw: Option<String>) -> serde_json::Value {
+    raw.and_then(|s| serde_json::from_str(&s).ok())
+        .unwrap_or(serde_json::Value::Null)
+}
+
+fn validate_crypto_json(s: &str) -> Result<(), ApiError> {
+    if s.len() > 32_768 {
+        return Err(ApiError::bad("vault envelope too large"));
+    }
+    let v: serde_json::Value =
+        serde_json::from_str(s).map_err(|_| ApiError::bad("invalid vault envelope"))?;
+    let ok = v.get("v").and_then(|x| x.as_i64()) == Some(1)
+        && v.get("vault_pw").and_then(|x| x.as_str()).is_some()
+        && v.get("vault_rk").and_then(|x| x.as_str()).is_some()
+        && v.get("pub").and_then(|x| x.as_str()).is_some()
+        && v.get("priv_wrap").and_then(|x| x.as_str()).is_some();
+    if !ok {
+        return Err(ApiError::bad("invalid vault envelope"));
+    }
+    Ok(())
+}
+
+fn validate_wrap(s: &str) -> Result<(), ApiError> {
+    if s.is_empty() || s.len() > 16_384 {
+        return Err(ApiError::bad("invalid key wrap"));
+    }
+    Ok(())
+}
+
+async fn get_vault(
+    AuthUser(user): AuthUser,
+    State(state): State<Arc<AppState>>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    let vault = state.db.get_crypto_json(user.id).await?;
+    Ok(Json(serde_json::json!({ "vault": parse_vault_json(vault) })))
+}
+
+#[derive(Deserialize)]
+struct VaultBody {
+    crypto_json: serde_json::Value,
+}
+
+async fn put_vault(
+    AuthUser(user): AuthUser,
+    State(state): State<Arc<AppState>>,
+    Json(body): Json<VaultBody>,
+) -> Result<StatusCode, ApiError> {
+    let raw = body.crypto_json.to_string();
+    validate_crypto_json(&raw)?;
+    state.db.set_crypto_json(user.id, &raw).await?;
+    Ok(StatusCode::NO_CONTENT)
+}
+
+#[derive(Deserialize)]
+struct ResetVaultQuery {
+    token: String,
+}
+
+async fn reset_vault(
+    State(state): State<Arc<AppState>>,
+    Query(q): Query<ResetVaultQuery>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    let Some(user_id) = state
+        .db
+        .peek_email_token(q.token.trim(), "reset")
+        .await?
+    else {
+        return Err(ApiError::not_found("reset"));
+    };
+    let vault = state.db.get_crypto_json(user_id).await?;
+    Ok(Json(serde_json::json!({ "vault": parse_vault_json(vault) })))
+}
+
+async fn crypto_pubkey(
+    AuthUser(_user): AuthUser,
+    State(state): State<Arc<AppState>>,
+    Path(username): Path<String>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    let Some((id, pub_b64)) = state.db.crypto_pub_for_username(&username).await? else {
+        return Err(ApiError::not_found("user"));
+    };
+    Ok(Json(serde_json::json!({ "user_id": id, "pub": pub_b64 })))
+}
+
+#[derive(Deserialize)]
+struct KeyWrapBody {
+    wrap: String,
+    username: Option<String>,
+    user_id: Option<Uuid>,
+}
+
+async fn put_project_key_wrap(
+    AuthUser(user): AuthUser,
+    State(state): State<Arc<AppState>>,
+    Path(id): Path<Uuid>,
+    Json(body): Json<KeyWrapBody>,
+) -> Result<StatusCode, ApiError> {
+    validate_wrap(&body.wrap)?;
+    let target = if let Some(uid) = body.user_id {
+        require_manage(&state, &user, id).await?;
+        uid
+    } else if let Some(name) = &body.username {
+        require_manage(&state, &user, id).await?;
+        match state.db.get_user_by_username(name).await? {
+            Some(u) => u.id,
+            None => return Ok(StatusCode::NO_CONTENT),
+        }
+    } else {
+        require_access(&state, &user, id).await?;
+        user.id
+    };
+    state
+        .db
+        .upsert_project_key_wrap(id, target, &body.wrap)
+        .await?;
+    Ok(StatusCode::NO_CONTENT)
+}
+
+#[derive(Deserialize)]
+struct InviteWrapBody {
+    wrap: String,
+}
+
+async fn put_invite_key_wrap(
+    AuthUser(user): AuthUser,
+    State(state): State<Arc<AppState>>,
+    Path((id, invite_id)): Path<(Uuid, Uuid)>,
+    Json(body): Json<InviteWrapBody>,
+) -> Result<StatusCode, ApiError> {
+    require_manage(&state, &user, id).await?;
+    validate_wrap(&body.wrap)?;
+    if !state.db.set_invite_key_wrap(id, invite_id, &body.wrap).await? {
+        return Err(ApiError::not_found("invite"));
+    }
     Ok(StatusCode::NO_CONTENT)
 }
 
@@ -470,6 +634,19 @@ fn with_role(project: tavern_core::Project, my_role: GrantRole) -> ProjectView {
     ProjectView {
         project,
         my_role,
+        key_wrap: None,
+    }
+}
+
+fn with_wrap(
+    project: tavern_core::Project,
+    my_role: GrantRole,
+    key_wrap: Option<String>,
+) -> ProjectView {
+    ProjectView {
+        project,
+        my_role,
+        key_wrap,
     }
 }
 
@@ -480,7 +657,7 @@ async fn list_projects(
     let rows = state.db.list_projects_for_user(&user).await?;
     Ok(Json(
         rows.into_iter()
-            .map(|(p, role)| with_role(p, role))
+            .map(|(p, role, wrap)| with_wrap(p, role, wrap))
             .collect(),
     ))
 }
@@ -520,7 +697,8 @@ async fn get_project(
         .get_project(id)
         .await?
         .ok_or(ApiError::not_found("project"))?;
-    Ok(Json(with_role(p, role)))
+    let wrap = state.db.get_project_key_wrap(id, user.id).await?;
+    Ok(Json(with_wrap(p, role, wrap)))
 }
 
 #[derive(Deserialize)]
@@ -544,7 +722,8 @@ async fn update_project(
         .db
         .update_project(id, &body.title, &body.synopsis, &theme)
         .await?;
-    Ok(Json(with_role(p, role)))
+    let wrap = state.db.get_project_key_wrap(id, user.id).await?;
+    Ok(Json(with_wrap(p, role, wrap)))
 }
 
 async fn delete_project(
@@ -668,7 +847,7 @@ async fn accept_invite(
     ) {
         return Err(ApiError::limited());
     }
-    let Some((project_id, role)) = state.db.accept_invite(&body.token).await? else {
+    let Some((project_id, role, key_wrap)) = state.db.accept_invite(&body.token).await? else {
         return Err(ApiError::bad("invite is invalid or expired"));
     };
     let current = state.db.project_access(&user, project_id).await?;
@@ -680,7 +859,11 @@ async fn accept_invite(
     if should_write {
         state.db.upsert_grant(project_id, user.id, role).await?;
     }
-    Ok(Json(serde_json::json!({ "project_id": project_id, "role": role })))
+    Ok(Json(serde_json::json!({
+        "project_id": project_id,
+        "role": role,
+        "key_wrap": key_wrap,
+    })))
 }
 
 async fn delete_grant(
@@ -1158,6 +1341,12 @@ async fn export_project(
 ) -> Result<Response, ApiError> {
     require_edit(&state, &user, id).await?;
     let format = ExportFormat::parse(&body.format).ok_or(ApiError::bad("invalid format"))?;
+    let wrap = state.db.get_project_key_wrap(id, user.id).await?;
+    if wrap.is_some() {
+        return Err(ApiError::bad(
+            "this project is encrypted; export from the browser",
+        ));
+    }
     let project = state
         .db
         .get_project(id)
@@ -1775,7 +1964,11 @@ async fn visible_element_for_panel(
 }
 
 fn count_words(s: &str) -> usize {
-    s.split_whitespace().count()
+    if s.starts_with("tv1.") {
+        0
+    } else {
+        s.split_whitespace().count()
+    }
 }
 
 fn sanitize(s: &str) -> String {

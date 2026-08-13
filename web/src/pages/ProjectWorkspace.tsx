@@ -27,6 +27,7 @@ import {
   saveChrome,
 } from "../lib/chrome";
 import { TIPS } from "../tips";
+import { getProjectKey } from "../crypto/session";
 
 const MODULE_TIPS: Record<ModuleType, string> = {
   manuscript: TIPS.moduleManuscript,
@@ -330,8 +331,19 @@ export default function ProjectWorkspace({
                 data-tip={TIPS.exportDocx}
                 onClick={async () => {
                   try {
-                    const blob = await api.exportProject(projectId, "docx", "manuscript");
-                    await download(blob, `${project?.title || "project"}.docx`);
+                    const encrypted = !!getProjectKey(projectId);
+                    const blob = await api.exportProject(
+                      projectId,
+                      encrypted ? "markdown" : "docx",
+                      "manuscript"
+                    );
+                    await download(
+                      blob,
+                      `${project?.title || "project"}${encrypted ? "-manuscript.md" : ".docx"}`
+                    );
+                    if (encrypted) {
+                      setError("Encrypted projects export markdown only — the server cannot decrypt for pandoc.");
+                    }
                   } catch {
                     setError("DOCX export needs pandoc on the server");
                   }
@@ -666,7 +678,8 @@ export default function ProjectWorkspace({
               Grant access
             </button>
             <p className="muted" style={{ fontSize: "0.8rem" }}>
-              If that account exists, they now have access. No confirmation either way.
+              If that account exists, they now have access. No confirmation either way. Encrypted
+              projects need their vault — grant again after they’ve signed in once.
             </p>
             <button
               type="button"

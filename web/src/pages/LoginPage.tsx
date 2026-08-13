@@ -1,6 +1,9 @@
 import { FormEvent, useEffect, useState } from "react";
 import { Link } from "react-router-dom";
 import { api, User } from "../api/client";
+import RecoveryKey from "../components/RecoveryKey";
+import { createVault, parseEnvelope } from "../crypto/vault";
+import { setVault, unlockEnvelope } from "../crypto/session";
 import { TIPS } from "../tips";
 
 export default function LoginPage({ onLogin }: { onLogin: (u: User) => void }) {
@@ -9,6 +12,8 @@ export default function LoginPage({ onLogin }: { onLogin: (u: User) => void }) {
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [signup, setSignup] = useState(false);
+  const [recoveryKey, setRecoveryKey] = useState<string | null>(null);
+  const [pendingUser, setPendingUser] = useState<User | null>(null);
 
   useEffect(() => {
     api.authConfig().then((c) => setSignup(c.signup)).catch(() => setSignup(false));
@@ -20,12 +25,41 @@ export default function LoginPage({ onLogin }: { onLogin: (u: User) => void }) {
     setError(null);
     try {
       const res = await api.login(username, password);
-      onLogin(res.user);
+      const envelope = parseEnvelope(res.vault);
+      if (envelope) {
+        await unlockEnvelope(res.user.id, envelope, password);
+        onLogin(res.user);
+        return;
+      }
+      if (res.user.has_vault) {
+        setError("Vault on this account is unreadable. Writing cannot be unlocked from here.");
+        return;
+      }
+      const { envelope: created, recoveryKey: rk, unlocked } = await createVault(password);
+      await api.putVault(created);
+      setVault({ userId: res.user.id, ...unlocked });
+      setPendingUser({ ...res.user, has_vault: true });
+      setRecoveryKey(rk);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Login failed");
     } finally {
       setBusy(false);
     }
+  }
+
+  if (recoveryKey && pendingUser) {
+    return (
+      <div className="login-page">
+        <div className="login-card">
+          <div className="brand">Tavern</div>
+          <h1>Save your recovery key</h1>
+          <RecoveryKey
+            recoveryKey={recoveryKey}
+            onContinue={() => onLogin(pendingUser)}
+          />
+        </div>
+      </div>
+    );
   }
 
   return (

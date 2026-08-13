@@ -475,6 +475,24 @@ label.buttonish {
   color: var(--moss-dark);
 }
 
+.recovery-block {
+  display: grid;
+  gap: 0.85rem;
+}
+
+.recovery-key {
+  font-family: var(--font-mono);
+  font-size: 0.95rem;
+  letter-spacing: 0.04em;
+  word-break: break-all;
+  background: var(--stone);
+  border: 1px dashed var(--border);
+  border-radius: 8px;
+  padding: 0.85rem;
+  margin: 0;
+  user-select: all;
+}
+
 .projects-page {
   max-width: 960px;
   margin: 0 auto;

@@ -1,6 +1,8 @@
 import { FormEvent, useState } from "react";
 import { Link } from "react-router-dom";
 import { api } from "../api/client";
+import RecoveryKey from "../components/RecoveryKey";
+import { createVault } from "../crypto/vault";
 
 export default function SignupPage() {
   const [username, setUsername] = useState("");
@@ -9,14 +11,21 @@ export default function SignupPage() {
   const [error, setError] = useState<string | null>(null);
   const [done, setDone] = useState(false);
   const [busy, setBusy] = useState(false);
+  const [recoveryKey, setRecoveryKey] = useState<string | null>(null);
 
   async function submit(e: FormEvent) {
     e.preventDefault();
     setBusy(true);
     setError(null);
     try {
-      await api.signup({ username: username.trim(), email: email.trim(), password });
-      setDone(true);
+      const { envelope, recoveryKey: rk } = await createVault(password);
+      await api.signup({
+        username: username.trim(),
+        email: email.trim(),
+        password,
+        crypto_json: envelope,
+      });
+      setRecoveryKey(rk);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Sign up failed");
     } finally {
@@ -29,7 +38,16 @@ export default function SignupPage() {
       <div className="login-card">
         <div className="brand">Tavern</div>
         <h1>Take a seat</h1>
-        {done ? (
+        {recoveryKey && !done ? (
+          <>
+            <h2 style={{ fontSize: "1.2rem", marginTop: 0 }}>Save your recovery key</h2>
+            <RecoveryKey
+              recoveryKey={recoveryKey}
+              onContinue={() => setDone(true)}
+              continueLabel="I’ve saved it — continue"
+            />
+          </>
+        ) : done ? (
           <>
             <p>Check your email for a verification link. Then you can sign in.</p>
             <p className="login-links">
@@ -38,7 +56,10 @@ export default function SignupPage() {
           </>
         ) : (
           <>
-            <p>Create an account. We’ll send a link to confirm your email.</p>
+            <p>
+              Create an account. Writing is encrypted in your browser. We’ll email a link to confirm
+              your address — never your recovery key.
+            </p>
             <form onSubmit={submit}>
               <label>
                 Username

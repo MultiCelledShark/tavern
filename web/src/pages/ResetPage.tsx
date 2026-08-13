@@ -1,11 +1,13 @@
 import { FormEvent, useMemo, useState } from "react";
 import { Link, useSearchParams } from "react-router-dom";
 import { api } from "../api/client";
+import { parseEnvelope, rewrapVaultPassword, unlockWithRecovery } from "../crypto/vault";
 
 export default function ResetPage() {
   const [params] = useSearchParams();
   const token = useMemo(() => params.get("token") || "", [params]);
   const [password, setPassword] = useState("");
+  const [recoveryKey, setRecoveryKey] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [done, setDone] = useState(false);
   const [busy, setBusy] = useState(false);
@@ -15,10 +17,26 @@ export default function ResetPage() {
     setBusy(true);
     setError(null);
     try {
-      await api.resetPassword(token, password);
+      const { vault } = await api.resetVault(token);
+      const envelope = parseEnvelope(vault);
+      if (envelope) {
+        if (!recoveryKey.trim()) {
+          setError("Recovery key is required to keep your writing.");
+          return;
+        }
+        const unlocked = await unlockWithRecovery(envelope, recoveryKey.trim());
+        const next = await rewrapVaultPassword(envelope, unlocked.vaultKey, password);
+        await api.resetPassword(token, password, next);
+      } else {
+        await api.resetPassword(token, password);
+      }
       setDone(true);
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Reset failed");
+      setError(
+        err instanceof Error
+          ? err.message
+          : "Reset failed. Check the recovery key — without it, encrypted writing cannot be recovered."
+      );
     } finally {
       setBusy(false);
     }
@@ -40,6 +58,20 @@ export default function ResetPage() {
           </>
         ) : (
           <form onSubmit={submit}>
+            <p>
+              Email only proves you can receive mail. To keep novels readable, enter the recovery
+              key shown when you signed up. We cannot reconstruct it.
+            </p>
+            <label>
+              Recovery key
+              <input
+                value={recoveryKey}
+                onChange={(e) => setRecoveryKey(e.target.value)}
+                autoComplete="off"
+                spellCheck={false}
+                placeholder="xxxx-xxxx-xxxx-xxxx-xxxx-xxxx-xxxx-xxxx"
+              />
+            </label>
             <label>
               New password
               <input

@@ -303,6 +303,8 @@ pub struct User {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub email: Option<String>,
     pub email_verified: bool,
+    #[serde(default)]
+    pub has_vault: bool,
     pub created_at: DateTime<Utc>,
 }
 
@@ -323,6 +325,8 @@ pub struct ProjectView {
     #[serde(flatten)]
     pub project: Project,
     pub my_role: GrantRole,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub key_wrap: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

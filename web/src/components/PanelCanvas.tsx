@@ -3,6 +3,7 @@ import GridLayout, { Layout } from "react-grid-layout";
 import "react-grid-layout/css/styles.css";
 import "react-resizable/css/styles.css";
 import { api, Element, Page, Panel } from "../api/client";
+import AssetImg from "./AssetImg";
 import { TIPS } from "../tips";
 
 const PANEL_TYPES = [
@@ -475,7 +476,7 @@ function PanelEditor({
         <div className="image-grid">
           {images.map((img, i) => (
             <figure key={`${img.url}-${i}`} className="image-thumb">
-              <img src={img.url} alt={img.caption || ""} />
+              <AssetImg projectId={projectId} url={img.url} alt={img.caption || ""} />
               <figcaption>
                 <input
                   value={img.caption || ""}

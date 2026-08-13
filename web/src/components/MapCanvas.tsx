@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type MouseEvent } from "react";
 import { api, Element } from "../api/client";
+import AssetImg from "./AssetImg";
 import { TIPS } from "../tips";
 
 export type MapPin = {
@@ -152,7 +153,7 @@ export default function MapCanvas({
       <div className="map-stage" ref={frameRef}>
         {bg ? (
           <div className="map-frame" onClick={placePin} title={TIPS.mapPin}>
-            <img src={bg} alt={title} draggable={false} />
+            <AssetImg projectId={projectId} url={bg} alt={title} draggable={false} />
             {pins.map((pin) => (
               <button
                 key={pin.id}
