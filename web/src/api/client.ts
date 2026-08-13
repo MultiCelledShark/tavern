@@ -2,6 +2,8 @@ export type User = {
   id: string;
   username: string;
   is_admin: boolean;
+  email?: string;
+  email_verified: boolean;
 };
 
 export type GrantRole = "owner" | "editor" | "viewer";
@@ -142,14 +144,29 @@ async function req<T>(path: string, init?: RequestInit): Promise<T> {
 
 export const api = {
   me: () => req<User>("/api/auth/me"),
+  authConfig: () => req<{ signup: boolean }>("/api/auth/config"),
   login: (username: string, password: string) =>
     req<{ user: User }>("/api/auth/login", {
       method: "POST",
       body: JSON.stringify({ username, password }),
     }),
+  signup: (body: { username: string; email: string; password: string }) =>
+    req<void>("/api/auth/signup", { method: "POST", body: JSON.stringify(body) }),
+  verifyEmail: (token: string) =>
+    req<void>("/api/auth/verify", { method: "POST", body: JSON.stringify({ token }) }),
+  resendVerify: (email: string) =>
+    req<void>("/api/auth/resend", { method: "POST", body: JSON.stringify({ email }) }),
+  forgotPassword: (email: string) =>
+    req<void>("/api/auth/forgot", { method: "POST", body: JSON.stringify({ email }) }),
+  resetPassword: (token: string, password: string) =>
+    req<void>("/api/auth/reset", { method: "POST", body: JSON.stringify({ token, password }) }),
   listUsers: () => req<User[]>("/api/users"),
-  createUser: (body: { username: string; password: string; is_admin?: boolean }) =>
-    req<User>("/api/users", { method: "POST", body: JSON.stringify(body) }),
+  createUser: (body: {
+    username: string;
+    password: string;
+    email?: string;
+    is_admin?: boolean;
+  }) => req<User>("/api/users", { method: "POST", body: JSON.stringify(body) }),
   logout: () => req<void>("/api/auth/logout", { method: "POST" }),
   projects: () => req<Project[]>("/api/projects"),
   createProject: (title: string, synopsis = "") =>

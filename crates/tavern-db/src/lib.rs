@@ -53,7 +53,37 @@ impl Db {
         sqlx::raw_sql(include_str!("migrations/002_hardening.sql"))
             .execute(&self.pool)
             .await?;
+        sqlx::raw_sql(include_str!("migrations/003_signup.sql"))
+            .execute(&self.pool)
+            .await?;
+        if !self.column_exists("users", "email").await? {
+            sqlx::query("ALTER TABLE users ADD COLUMN email TEXT")
+                .execute(&self.pool)
+                .await?;
+        }
+        if !self.column_exists("users", "email_verified").await? {
+            sqlx::query(
+                "ALTER TABLE users ADD COLUMN email_verified INTEGER NOT NULL DEFAULT 1",
+            )
+            .execute(&self.pool)
+            .await?;
+        }
+        sqlx::query(
+            "CREATE UNIQUE INDEX IF NOT EXISTS idx_users_email ON users(email) WHERE email IS NOT NULL",
+        )
+        .execute(&self.pool)
+        .await?;
         Ok(())
+    }
+
+    async fn column_exists(&self, table: &str, column: &str) -> Result<bool> {
+        let rows = sqlx::query("SELECT name FROM pragma_table_info(?)")
+            .bind(table)
+            .fetch_all(&self.pool)
+            .await?;
+        Ok(rows
+            .iter()
+            .any(|r| r.get::<String, _>("name") == column))
     }
 
     pub const MIN_PASSWORD_LEN: usize = 12;
@@ -77,7 +107,7 @@ impl Db {
             return Ok(u);
         }
         Self::validate_password_strength(password)?;
-        self.create_user(username, password, true).await
+        self.create_user(username, password, true, None, true).await
     }
 
     pub fn validate_password_strength(password: &str) -> Result<()> {
@@ -128,56 +158,82 @@ impl Db {
         Ok(())
     }
 
-    pub async fn create_user(&self, username: &str, password: &str, is_admin: bool) -> Result<User> {
+    pub async fn create_user(
+        &self,
+        username: &str,
+        password: &str,
+        is_admin: bool,
+        email: Option<&str>,
+        email_verified: bool,
+    ) -> Result<User> {
         let id = Uuid::new_v4();
         let now = Utc::now();
         let hash = Self::hash_password(password)?;
         sqlx::query(
-            "INSERT INTO users (id, username, password_hash, is_admin, created_at) VALUES (?, ?, ?, ?, ?)",
+            "INSERT INTO users (id, username, password_hash, is_admin, created_at, email, email_verified)
+             VALUES (?, ?, ?, ?, ?, ?, ?)",
         )
         .bind(id.to_string())
         .bind(username)
         .bind(hash)
         .bind(is_admin as i64)
         .bind(now.to_rfc3339())
+        .bind(email)
+        .bind(email_verified as i64)
         .execute(&self.pool)
         .await?;
-        Ok(User {
-            id,
-            username: username.to_string(),
-            is_admin,
-            created_at: now,
-        })
+        self.get_user(id)
+            .await?
+            .ok_or_else(|| anyhow!("user missing after create"))
+    }
+
+    pub async fn set_email(&self, user_id: Uuid, email: Option<&str>, verified: bool) -> Result<()> {
+        sqlx::query("UPDATE users SET email = ?, email_verified = ? WHERE id = ?")
+            .bind(email)
+            .bind(verified as i64)
+            .bind(user_id.to_string())
+            .execute(&self.pool)
+            .await?;
+        Ok(())
+    }
+
+    pub async fn set_email_verified(&self, user_id: Uuid, verified: bool) -> Result<()> {
+        sqlx::query("UPDATE users SET email_verified = ? WHERE id = ?")
+            .bind(verified as i64)
+            .bind(user_id.to_string())
+            .execute(&self.pool)
+            .await?;
+        Ok(())
     }
 
     pub async fn get_user(&self, id: Uuid) -> Result<Option<User>> {
         let row = sqlx::query(
-            "SELECT id, username, is_admin, created_at FROM users WHERE id = ?",
+            "SELECT id, username, is_admin, created_at, email, email_verified FROM users WHERE id = ?",
         )
         .bind(id.to_string())
         .fetch_optional(&self.pool)
         .await?;
-        Ok(row.map(|r| User {
-            id: Uuid::parse_str(r.get::<String, _>("id").as_str()).unwrap(),
-            username: r.get("username"),
-            is_admin: r.get::<i64, _>("is_admin") != 0,
-            created_at: parse_dt(r.get::<String, _>("created_at")),
-        }))
+        Ok(row.map(map_user))
     }
 
     pub async fn get_user_by_username(&self, username: &str) -> Result<Option<User>> {
         let row = sqlx::query(
-            "SELECT id, username, is_admin, created_at FROM users WHERE username = ?",
+            "SELECT id, username, is_admin, created_at, email, email_verified FROM users WHERE username = ?",
         )
         .bind(username)
         .fetch_optional(&self.pool)
         .await?;
-        Ok(row.map(|r| User {
-            id: Uuid::parse_str(r.get::<String, _>("id").as_str()).unwrap(),
-            username: r.get("username"),
-            is_admin: r.get::<i64, _>("is_admin") != 0,
-            created_at: parse_dt(r.get::<String, _>("created_at")),
-        }))
+        Ok(row.map(map_user))
+    }
+
+    pub async fn get_user_by_email(&self, email: &str) -> Result<Option<User>> {
+        let row = sqlx::query(
+            "SELECT id, username, is_admin, created_at, email, email_verified FROM users WHERE email = ?",
+        )
+        .bind(email)
+        .fetch_optional(&self.pool)
+        .await?;
+        Ok(row.map(map_user))
     }
 
     pub async fn get_password_hash(&self, username: &str) -> Result<Option<String>> {
@@ -190,19 +246,11 @@ impl Db {
 
     pub async fn list_users(&self) -> Result<Vec<User>> {
         let rows = sqlx::query(
-            "SELECT id, username, is_admin, created_at FROM users ORDER BY username",
+            "SELECT id, username, is_admin, created_at, email, email_verified FROM users ORDER BY username",
         )
         .fetch_all(&self.pool)
         .await?;
-        Ok(rows
-            .into_iter()
-            .map(|r| User {
-                id: Uuid::parse_str(r.get::<String, _>("id").as_str()).unwrap(),
-                username: r.get("username"),
-                is_admin: r.get::<i64, _>("is_admin") != 0,
-                created_at: parse_dt(r.get::<String, _>("created_at")),
-            })
-            .collect())
+        Ok(rows.into_iter().map(map_user).collect())
     }
 
     fn hash_secret(token: &str) -> String {
@@ -231,7 +279,7 @@ impl Db {
     pub async fn user_for_session(&self, token: &str) -> Result<Option<User>> {
         let token_hash = Self::hash_secret(token);
         let row = sqlx::query(
-            "SELECT u.id, u.username, u.is_admin, u.created_at, s.expires_at
+            "SELECT u.id, u.username, u.is_admin, u.created_at, u.email, u.email_verified, s.expires_at
              FROM sessions s JOIN users u ON u.id = s.user_id WHERE s.token = ?",
         )
         .bind(&token_hash)
@@ -248,12 +296,68 @@ impl Db {
                 .await;
             return Ok(None);
         }
-        Ok(Some(User {
-            id: Uuid::parse_str(r.get::<String, _>("id").as_str()).unwrap(),
-            username: r.get("username"),
-            is_admin: r.get::<i64, _>("is_admin") != 0,
-            created_at: parse_dt(r.get::<String, _>("created_at")),
-        }))
+        Ok(Some(map_user(r)))
+    }
+
+    pub async fn delete_sessions_for_user(&self, user_id: Uuid) -> Result<()> {
+        sqlx::query("DELETE FROM sessions WHERE user_id = ?")
+            .bind(user_id.to_string())
+            .execute(&self.pool)
+            .await?;
+        Ok(())
+    }
+
+    pub async fn issue_email_token(
+        &self,
+        user_id: Uuid,
+        purpose: &str,
+        ttl: Duration,
+    ) -> Result<String> {
+        sqlx::query("DELETE FROM email_tokens WHERE user_id = ? AND purpose = ?")
+            .bind(user_id.to_string())
+            .bind(purpose)
+            .execute(&self.pool)
+            .await?;
+        let mut bytes = [0u8; 32];
+        OsRng.fill_bytes(&mut bytes);
+        let token = hex::encode(bytes);
+        let now = Utc::now();
+        let expires = now + ttl;
+        sqlx::query(
+            "INSERT INTO email_tokens (token_hash, user_id, purpose, expires_at, created_at)
+             VALUES (?, ?, ?, ?, ?)",
+        )
+        .bind(Self::hash_secret(&token))
+        .bind(user_id.to_string())
+        .bind(purpose)
+        .bind(expires.to_rfc3339())
+        .bind(now.to_rfc3339())
+        .execute(&self.pool)
+        .await?;
+        Ok(token)
+    }
+
+    pub async fn consume_email_token(&self, token: &str, purpose: &str) -> Result<Option<Uuid>> {
+        let row = sqlx::query(
+            "SELECT user_id, expires_at FROM email_tokens WHERE token_hash = ? AND purpose = ?",
+        )
+        .bind(Self::hash_secret(token))
+        .bind(purpose)
+        .fetch_optional(&self.pool)
+        .await?;
+        let Some(r) = row else {
+            return Ok(None);
+        };
+        let expires = parse_dt(r.get::<String, _>("expires_at"));
+        let user_id = Uuid::parse_str(r.get::<String, _>("user_id").as_str()).unwrap();
+        sqlx::query("DELETE FROM email_tokens WHERE token_hash = ?")
+            .bind(Self::hash_secret(token))
+            .execute(&self.pool)
+            .await?;
+        if expires < Utc::now() {
+            return Ok(None);
+        }
+        Ok(Some(user_id))
     }
 
     pub async fn delete_session(&self, token: &str) -> Result<()> {
@@ -1082,6 +1186,19 @@ impl Db {
             .execute(&self.pool)
             .await?;
         Ok(())
+    }
+}
+
+fn map_user(r: sqlx::sqlite::SqliteRow) -> User {
+    User {
+        id: Uuid::parse_str(r.get::<String, _>("id").as_str()).unwrap(),
+        username: r.get("username"),
+        is_admin: r.get::<i64, _>("is_admin") != 0,
+        email: r
+            .get::<Option<String>, _>("email")
+            .filter(|s| !s.is_empty()),
+        email_verified: r.get::<i64, _>("email_verified") != 0,
+        created_at: parse_dt(r.get::<String, _>("created_at")),
     }
 }
 

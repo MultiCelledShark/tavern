@@ -76,7 +76,7 @@ export const TIPS = {
   tutorial: "Load a guided sample covering every module — safe to delete later",
   openProject: "Open this project workspace",
   deleteProject: "Permanently delete this project and its data",
-  loginUser: "Admin or account username from your server .env / users",
+  loginUser: "Account username",
   loginPass: "Account password",
   mapUpload: "Set or replace the background image for this map",
   mapPin: "Click the map to place a pin; select a pin to rename or link a location",

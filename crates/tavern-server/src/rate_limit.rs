@@ -13,7 +13,7 @@ impl RateLimiter {
     pub fn new() -> Self {
         Self {
             inner: Mutex::new(HashMap::new()),
-            max_keys: 50_000,
+            max_keys: 100_000,
         }
     }
 

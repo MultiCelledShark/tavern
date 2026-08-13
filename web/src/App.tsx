@@ -2,6 +2,10 @@ import { useEffect, useState } from "react";
 import { Navigate, Route, Routes, useLocation } from "react-router-dom";
 import { api, User } from "./api/client";
 import LoginPage from "./pages/LoginPage";
+import SignupPage from "./pages/SignupPage";
+import ForgotPage from "./pages/ForgotPage";
+import ResetPage from "./pages/ResetPage";
+import VerifyPage from "./pages/VerifyPage";
 import ProjectsPage from "./pages/ProjectsPage";
 import ProjectWorkspace from "./pages/ProjectWorkspace";
 import UsersPage from "./pages/UsersPage";
@@ -45,6 +49,10 @@ export default function App() {
           )
         }
       />
+      <Route path="/signup" element={user ? <Navigate to="/" replace /> : <SignupPage />} />
+      <Route path="/forgot" element={user ? <Navigate to="/" replace /> : <ForgotPage />} />
+      <Route path="/reset" element={<ResetPage />} />
+      <Route path="/verify" element={<VerifyPage />} />
       <Route path="/invite/:token" element={<InvitePage user={user} />} />
       <Route
         path="/"

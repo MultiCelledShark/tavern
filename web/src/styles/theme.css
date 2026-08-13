@@ -466,6 +466,15 @@ label.buttonish {
   margin-top: 1.25rem;
 }
 
+.login-links {
+  margin-top: 1rem;
+  font-size: 0.95rem;
+}
+
+.login-links a {
+  color: var(--moss-dark);
+}
+
 .projects-page {
   max-width: 960px;
   margin: 0 auto;

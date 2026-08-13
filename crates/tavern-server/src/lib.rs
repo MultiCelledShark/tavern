@@ -1,4 +1,5 @@
 pub mod auth;
+pub mod mail;
 pub mod routes;
 pub mod state;
 mod rate_limit;
@@ -26,18 +27,26 @@ pub async fn build_state(config: Config) -> Result<Arc<AppState>> {
     } else {
         None
     };
-    db.ensure_admin(
-        &config.admin_username,
-        &config.admin_password,
-        force_password,
-    )
-    .await?;
+    let admin = db
+        .ensure_admin(
+            &config.admin_username,
+            &config.admin_password,
+            force_password,
+        )
+        .await?;
+    if let Some(ref raw) = config.admin_email {
+        if let Some(email) = tavern_core::normalize_email(raw) {
+            db.set_email(admin.id, Some(&email), true).await?;
+        }
+    }
+    let mailer = crate::mail::Mailer::from_config(&config);
     let dummy_password_hash = Db::hash_password("tavern-timing-dummy-not-a-login")?;
     Ok(Arc::new(AppState {
         db,
         config,
         limiter: RateLimiter::new(),
         dummy_password_hash,
+        mailer,
     }))
 }
 

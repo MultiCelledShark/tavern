@@ -1,4 +1,5 @@
-import { FormEvent, useState } from "react";
+import { FormEvent, useEffect, useState } from "react";
+import { Link } from "react-router-dom";
 import { api, User } from "../api/client";
 import { TIPS } from "../tips";
 
@@ -7,6 +8,11 @@ export default function LoginPage({ onLogin }: { onLogin: (u: User) => void }) {
   const [password, setPassword] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  const [signup, setSignup] = useState(false);
+
+  useEffect(() => {
+    api.authConfig().then((c) => setSignup(c.signup)).catch(() => setSignup(false));
+  }, []);
 
   async function submit(e: FormEvent) {
     e.preventDefault();
@@ -55,6 +61,15 @@ export default function LoginPage({ onLogin }: { onLogin: (u: User) => void }) {
             {busy ? "Entering…" : "Enter"}
           </button>
         </form>
+        <p className="login-links">
+          <Link to="/forgot">Forgot password</Link>
+          {signup && (
+            <>
+              {" · "}
+              <Link to="/signup">Create an account</Link>
+            </>
+          )}
+        </p>
       </div>
     </div>
   );

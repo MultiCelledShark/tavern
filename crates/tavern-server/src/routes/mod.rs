@@ -34,6 +34,12 @@ pub fn router() -> Router<Arc<AppState>> {
         .route("/api/auth/login", post(login))
         .route("/api/auth/logout", post(logout))
         .route("/api/auth/me", get(me))
+        .route("/api/auth/config", get(auth_config))
+        .route("/api/auth/signup", post(signup))
+        .route("/api/auth/verify", post(verify_email))
+        .route("/api/auth/resend", post(resend_verify))
+        .route("/api/auth/forgot", post(forgot_password))
+        .route("/api/auth/reset", post(reset_password))
         .route("/api/users", get(list_users).post(create_user))
         .route("/api/projects", get(list_projects).post(create_project))
         .route("/api/projects/tutorial", post(create_tutorial_project))
@@ -159,6 +165,11 @@ async fn login(
         return Err(ApiError::unauthorized("invalid credentials"));
     }
     let user = user.unwrap();
+    if !user.email_verified && !user.is_admin {
+        return Err(ApiError::forbidden_msg(
+            "verify your email before signing in",
+        ));
+    }
     let _ = state.db.purge_expired_sessions().await;
     let token = state.db.create_session(user.id).await?;
     let mut cookie = Cookie::new("tavern_session", token);
@@ -189,10 +200,205 @@ async fn me(AuthUser(user): AuthUser) -> Json<User> {
     Json(user)
 }
 
+async fn auth_config(State(state): State<Arc<AppState>>) -> Json<serde_json::Value> {
+    Json(serde_json::json!({ "signup": state.config.signup_enabled }))
+}
+
+#[derive(Deserialize)]
+struct SignupBody {
+    username: String,
+    email: String,
+    password: String,
+}
+
+async fn signup(
+    State(state): State<Arc<AppState>>,
+    ConnectInfo(addr): ConnectInfo<SocketAddr>,
+    headers: HeaderMap,
+    Json(body): Json<SignupBody>,
+) -> Result<StatusCode, ApiError> {
+    if !state.config.signup_enabled {
+        return Err(ApiError::forbidden_msg("sign up is disabled"));
+    }
+    let ip = client_ip(&headers, Some(addr), state.config.trust_proxy);
+    if !state
+        .limiter
+        .check(&format!("signup:ip:{ip}"), 5, Duration::from_secs(15 * 60))
+    {
+        return Err(ApiError::limited());
+    }
+    if !tavern_core::valid_username(&body.username) {
+        return Err(ApiError::bad(
+            "username must be 3–32 letters, numbers, _ or -",
+        ));
+    }
+    let Some(email) = tavern_core::normalize_email(&body.email) else {
+        return Err(ApiError::bad("invalid email"));
+    };
+    tavern_db::Db::validate_password_strength(&body.password)
+        .map_err(|e| ApiError::bad(&e.to_string()))?;
+    if !state.limiter.check(
+        &format!("signup:email:{email}"),
+        3,
+        Duration::from_secs(60 * 60),
+    ) {
+        return Err(ApiError::limited());
+    }
+    if state
+        .db
+        .get_user_by_username(body.username.trim())
+        .await?
+        .is_some()
+    {
+        return Err(ApiError::bad("username taken"));
+    }
+    if let Some(existing) = state.db.get_user_by_email(&email).await? {
+        if existing.email_verified {
+            state.mailer.send_already_registered(&email);
+        } else {
+            let token = state
+                .db
+                .issue_email_token(existing.id, "verify", chrono::Duration::hours(48))
+                .await?;
+            state.mailer.send_verify(&email, &token);
+        }
+        return Ok(StatusCode::NO_CONTENT);
+    }
+    let user = state
+        .db
+        .create_user(body.username.trim(), &body.password, false, Some(&email), false)
+        .await?;
+    let token = state
+        .db
+        .issue_email_token(user.id, "verify", chrono::Duration::hours(48))
+        .await?;
+    state.mailer.send_verify(&email, &token);
+    Ok(StatusCode::NO_CONTENT)
+}
+
+#[derive(Deserialize)]
+struct TokenBody {
+    token: String,
+}
+
+async fn verify_email(
+    State(state): State<Arc<AppState>>,
+    Json(body): Json<TokenBody>,
+) -> Result<StatusCode, ApiError> {
+    let Some(user_id) = state
+        .db
+        .consume_email_token(body.token.trim(), "verify")
+        .await?
+    else {
+        return Err(ApiError::bad("invalid or expired link"));
+    };
+    state.db.set_email_verified(user_id, true).await?;
+    Ok(StatusCode::NO_CONTENT)
+}
+
+#[derive(Deserialize)]
+struct EmailBody {
+    email: String,
+}
+
+async fn resend_verify(
+    State(state): State<Arc<AppState>>,
+    ConnectInfo(addr): ConnectInfo<SocketAddr>,
+    headers: HeaderMap,
+    Json(body): Json<EmailBody>,
+) -> Result<StatusCode, ApiError> {
+    let ip = client_ip(&headers, Some(addr), state.config.trust_proxy);
+    if !state
+        .limiter
+        .check(&format!("resend:ip:{ip}"), 5, Duration::from_secs(15 * 60))
+    {
+        return Err(ApiError::limited());
+    }
+    let Some(email) = tavern_core::normalize_email(&body.email) else {
+        return Ok(StatusCode::NO_CONTENT);
+    };
+    if let Some(user) = state.db.get_user_by_email(&email).await? {
+        if !user.email_verified {
+            let token = state
+                .db
+                .issue_email_token(user.id, "verify", chrono::Duration::hours(48))
+                .await?;
+            state.mailer.send_verify(&email, &token);
+        }
+    }
+    Ok(StatusCode::NO_CONTENT)
+}
+
+async fn forgot_password(
+    State(state): State<Arc<AppState>>,
+    ConnectInfo(addr): ConnectInfo<SocketAddr>,
+    headers: HeaderMap,
+    Json(body): Json<EmailBody>,
+) -> Result<StatusCode, ApiError> {
+    let ip = client_ip(&headers, Some(addr), state.config.trust_proxy);
+    if !state
+        .limiter
+        .check(&format!("forgot:ip:{ip}"), 5, Duration::from_secs(15 * 60))
+    {
+        return Err(ApiError::limited());
+    }
+    let Some(email) = tavern_core::normalize_email(&body.email) else {
+        return Ok(StatusCode::NO_CONTENT);
+    };
+    if !state.limiter.check(
+        &format!("forgot:email:{email}"),
+        3,
+        Duration::from_secs(60 * 60),
+    ) {
+        return Ok(StatusCode::NO_CONTENT);
+    }
+    if let Some(user) = state.db.get_user_by_email(&email).await? {
+        if user.email_verified {
+            let token = state
+                .db
+                .issue_email_token(user.id, "reset", chrono::Duration::hours(2))
+                .await?;
+            state.mailer.send_reset(&email, &token);
+        } else {
+            let token = state
+                .db
+                .issue_email_token(user.id, "verify", chrono::Duration::hours(48))
+                .await?;
+            state.mailer.send_verify(&email, &token);
+        }
+    }
+    Ok(StatusCode::NO_CONTENT)
+}
+
+#[derive(Deserialize)]
+struct ResetBody {
+    token: String,
+    password: String,
+}
+
+async fn reset_password(
+    State(state): State<Arc<AppState>>,
+    Json(body): Json<ResetBody>,
+) -> Result<StatusCode, ApiError> {
+    tavern_db::Db::validate_password_strength(&body.password)
+        .map_err(|e| ApiError::bad(&e.to_string()))?;
+    let Some(user_id) = state
+        .db
+        .consume_email_token(body.token.trim(), "reset")
+        .await?
+    else {
+        return Err(ApiError::bad("invalid or expired link"));
+    };
+    state.db.set_password(user_id, &body.password).await?;
+    state.db.delete_sessions_for_user(user_id).await?;
+    Ok(StatusCode::NO_CONTENT)
+}
+
 #[derive(Deserialize)]
 struct CreateUserBody {
     username: String,
     password: String,
+    email: Option<String>,
     is_admin: Option<bool>,
 }
 
@@ -215,13 +421,37 @@ async fn create_user(
     ) {
         return Err(ApiError::limited());
     }
-    tavern_db::Db::validate_password_strength(&body.password)?;
+    tavern_db::Db::validate_password_strength(&body.password)
+        .map_err(|e| ApiError::bad(&e.to_string()))?;
+    if !tavern_core::valid_username(&body.username) {
+        return Err(ApiError::bad(
+            "username must be 3–32 letters, numbers, _ or -",
+        ));
+    }
     if state.db.get_user_by_username(&body.username).await?.is_some() {
         return Err(ApiError::bad("username taken"));
     }
+    let email = match body.email.as_deref().map(str::trim).filter(|s| !s.is_empty()) {
+        Some(raw) => {
+            let Some(e) = tavern_core::normalize_email(raw) else {
+                return Err(ApiError::bad("invalid email"));
+            };
+            if state.db.get_user_by_email(&e).await?.is_some() {
+                return Err(ApiError::bad("email taken"));
+            }
+            Some(e)
+        }
+        None => None,
+    };
     let user = state
         .db
-        .create_user(&body.username, &body.password, body.is_admin.unwrap_or(false))
+        .create_user(
+            body.username.trim(),
+            &body.password,
+            body.is_admin.unwrap_or(false),
+            email.as_deref(),
+            true,
+        )
         .await?;
     Ok((StatusCode::CREATED, Json(user)))
 }
@@ -1570,9 +1800,12 @@ impl ApiError {
         }
     }
     fn forbidden() -> Self {
+        Self::forbidden_msg("forbidden")
+    }
+    fn forbidden_msg(msg: &str) -> Self {
         Self {
             status: StatusCode::FORBIDDEN,
-            message: "forbidden".into(),
+            message: msg.into(),
             body: None,
         }
     }

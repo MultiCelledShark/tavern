@@ -14,7 +14,7 @@ Inspired by Campfire’s layout concepts; original code and UI. Not affiliated w
 - **Export:** Markdown / DOCX / EPUB / PDF / HTML (via pandoc) + `.tavern` backups
 - **Import:** Intermediate JSON, ZIP scans, Campfire HTML Export Server dumps; unknown binaries → encyclopedia stubs
 - **Assets:** project image upload for panels and map backgrounds
-- **Multi-user:** Argon2 sessions, project grants (owner / editor / viewer)
+- **Multi-user:** public signup with email verification, Argon2 sessions, project grants (owner / editor / viewer)
 
 ## Quick start
 
@@ -26,7 +26,7 @@ cd web && npm install && npm run build && cd ..
 cargo run -p tavern-server
 ```
 
-Open http://127.0.0.1:8084 and log in with `TAVERN_ADMIN_USER` / `TAVERN_ADMIN_PASS`.
+Open http://127.0.0.1:8084 and log in with `TAVERN_ADMIN_USER` / `TAVERN_ADMIN_PASS`. Writers can sign up once SMTP (or log-only mail) is configured — see `.env.example`.
 
 Dev UI with HMR:
 

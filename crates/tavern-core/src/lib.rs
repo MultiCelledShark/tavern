@@ -11,6 +11,16 @@ pub struct Config {
     pub admin_password: String,
     pub cookie_secure: bool,
     pub trust_proxy: bool,
+    pub signup_enabled: bool,
+    pub public_url: String,
+    pub admin_email: Option<String>,
+    pub smtp_host: Option<String>,
+    pub smtp_port: u16,
+    pub smtp_user: Option<String>,
+    pub smtp_pass: Option<String>,
+    pub smtp_from: String,
+    /// `starttls` | `tls` | `off`
+    pub smtp_security: String,
 }
 
 impl Default for Config {
@@ -22,6 +32,15 @@ impl Default for Config {
             admin_password: "change-me-to-a-strong-password".into(),
             cookie_secure: false,
             trust_proxy: false,
+            signup_enabled: true,
+            public_url: "http://127.0.0.1:8084".into(),
+            admin_email: None,
+            smtp_host: None,
+            smtp_port: 587,
+            smtp_user: None,
+            smtp_pass: None,
+            smtp_from: "tavern@localhost".into(),
+            smtp_security: "starttls".into(),
         }
     }
 }
@@ -43,6 +62,35 @@ impl Config {
         }
         c.cookie_secure = env_bool("TAVERN_COOKIE_SECURE");
         c.trust_proxy = env_bool("TAVERN_TRUST_PROXY");
+        if let Ok(v) = std::env::var("TAVERN_SIGNUP") {
+            c.signup_enabled = matches!(v.as_str(), "1" | "true" | "yes" | "on");
+        }
+        if let Ok(v) = std::env::var("TAVERN_PUBLIC_URL") {
+            c.public_url = v.trim_end_matches('/').to_string();
+        }
+        if let Ok(v) = std::env::var("TAVERN_ADMIN_EMAIL") {
+            c.admin_email = Some(v);
+        }
+        if let Ok(v) = std::env::var("TAVERN_SMTP_HOST") {
+            c.smtp_host = Some(v);
+        }
+        if let Ok(v) = std::env::var("TAVERN_SMTP_PORT") {
+            if let Ok(p) = v.parse() {
+                c.smtp_port = p;
+            }
+        }
+        if let Ok(v) = std::env::var("TAVERN_SMTP_USER") {
+            c.smtp_user = Some(v);
+        }
+        if let Ok(v) = std::env::var("TAVERN_SMTP_PASS") {
+            c.smtp_pass = Some(v);
+        }
+        if let Ok(v) = std::env::var("TAVERN_SMTP_FROM") {
+            c.smtp_from = v;
+        }
+        if let Ok(v) = std::env::var("TAVERN_SMTP_SECURITY") {
+            c.smtp_security = v.to_ascii_lowercase();
+        }
         c
     }
 
@@ -251,6 +299,9 @@ pub struct User {
     pub id: Uuid,
     pub username: String,
     pub is_admin: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub email: Option<String>,
+    pub email_verified: bool,
     pub created_at: DateTime<Utc>,
 }
 
@@ -617,4 +668,29 @@ pub fn default_template_pages(module: ModuleType) -> serde_json::Value {
             ]
         }]),
     }
+}
+
+pub fn valid_username(s: &str) -> bool {
+    let t = s.trim();
+    (3..=32).contains(&t.len())
+        && t.chars().all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-')
+}
+
+pub fn normalize_email(s: &str) -> Option<String> {
+    let e = s.trim().to_ascii_lowercase();
+    let (local, domain) = e.split_once('@')?;
+    if local.is_empty()
+        || domain.is_empty()
+        || e.len() > 254
+        || e.chars().any(|c| c.is_whitespace() || c == '\0')
+    {
+        return None;
+    }
+    if domain != "localhost" && !domain.contains('.') {
+        return None;
+    }
+    if domain.starts_with('.') || domain.ends_with('.') {
+        return None;
+    }
+    Some(e)
 }

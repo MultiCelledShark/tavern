@@ -12,6 +12,7 @@ export default function UsersPage({
 }) {
   const [users, setUsers] = useState<User[]>([]);
   const [username, setUsername] = useState("");
+  const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [makeAdmin, setMakeAdmin] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -34,9 +35,11 @@ export default function UsersPage({
       await api.createUser({
         username: username.trim(),
         password,
+        email: email.trim() || undefined,
         is_admin: makeAdmin,
       });
       setUsername("");
+      setEmail("");
       setPassword("");
       setMakeAdmin(false);
       await refresh();
@@ -81,6 +84,13 @@ export default function UsersPage({
             data-tip={TIPS.createUser}
           />
           <input
+            type="email"
+            placeholder="Email (optional, already verified)"
+            value={email}
+            onChange={(e) => setEmail(e.target.value)}
+            autoComplete="off"
+          />
+          <input
             type="password"
             placeholder="Password (12+ characters)"
             value={password}
@@ -113,6 +123,8 @@ export default function UsersPage({
               <strong>{u.username}</strong>
               <span className="muted" style={{ marginLeft: "0.5rem" }}>
                 {u.is_admin ? "admin" : "writer"}
+                {u.email ? ` · ${u.email}` : ""}
+                {u.email && !u.email_verified ? " · unverified" : ""}
               </span>
             </li>
           ))}
