@@ -19,11 +19,13 @@ export default function RelationshipGraph({
   projectId,
   elements,
   links,
+  canEdit,
   onChange,
 }: {
   projectId: string;
   elements: Element[];
   links: ElementLink[];
+  canEdit: boolean;
   onChange: () => Promise<void>;
 }) {
   const initialNodes: Node[] = useMemo(
@@ -65,7 +67,7 @@ export default function RelationshipGraph({
 
   const onConnect = useCallback(
     async (connection: Connection) => {
-      if (!connection.source || !connection.target) return;
+      if (!canEdit || !connection.source || !connection.target) return;
       const link = await api.createLink(projectId, {
         from_element_id: connection.source,
         to_element_id: connection.target,
@@ -85,7 +87,7 @@ export default function RelationshipGraph({
       );
       await onChange();
     },
-    [projectId, onChange, setEdges]
+    [canEdit, projectId, onChange, setEdges]
   );
 
   return (
@@ -93,29 +95,33 @@ export default function RelationshipGraph({
       <div className="row" style={{ marginBottom: "0.75rem" }}>
         <h2 style={{ margin: 0 }}>Relationship web</h2>
         <span className="muted" data-tip={TIPS.graphHint}>
-          Drag between characters to link them
+          {canEdit ? "Drag between characters to link them" : "Read only"}
         </span>
-        <button
-          type="button"
-          data-tip={TIPS.undoLink}
-          onClick={async () => {
-            const edge = edges[edges.length - 1];
-            if (!edge) return;
-            await api.deleteLink(edge.id);
-            setEdges((eds) => eds.slice(0, -1));
-            await onChange();
-          }}
-        >
-          Undo last link
-        </button>
+        {canEdit && (
+          <button
+            type="button"
+            data-tip={TIPS.undoLink}
+            onClick={async () => {
+              const edge = edges[edges.length - 1];
+              if (!edge) return;
+              await api.deleteLink(edge.id);
+              setEdges((eds) => eds.slice(0, -1));
+              await onChange();
+            }}
+          >
+            Undo last link
+          </button>
+        )}
       </div>
       <div className="relationship-canvas" data-tip={TIPS.graphHint}>
         <ReactFlow
           nodes={nodes}
           edges={edges}
           onNodesChange={onNodesChange}
-          onEdgesChange={onEdgesChange}
-          onConnect={onConnect}
+          onEdgesChange={canEdit ? onEdgesChange : undefined}
+          onConnect={canEdit ? onConnect : undefined}
+          nodesConnectable={canEdit}
+          elementsSelectable
           fitView
         >
           <Background />

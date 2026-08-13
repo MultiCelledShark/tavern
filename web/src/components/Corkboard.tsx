@@ -58,10 +58,12 @@ function stripCorkMeta(meta: Record<string, unknown>): Record<string, unknown> {
 
 export default function Corkboard({
   elements,
+  canEdit,
   onOpen,
   onChanged,
 }: {
   elements: Element[];
+  canEdit: boolean;
   onOpen: (id: string) => void;
   onChanged: () => Promise<void>;
 }) {
@@ -189,22 +191,28 @@ export default function Corkboard({
     <div className="corkboard-wrap">
       <div className="corkboard-toolbar row">
         <h2 style={{ margin: 0 }}>Corkboard</h2>
-        <span className="muted">Drag a card onto another slot to reorder · edit titles inline</span>
+        <span className="muted">
+          {canEdit ? "Drag a card onto another slot to reorder · edit titles inline" : "Read only"}
+        </span>
         <div className="spacer" />
-        <button type="button" data-tip={TIPS.corkUndo} disabled={!past.length || busy} onClick={() => void undo()}>
-          Undo
-        </button>
-        <button type="button" data-tip={TIPS.corkRedo} disabled={!future.length || busy} onClick={() => void redo()}>
-          Redo
-        </button>
-        <button
-          type="button"
-          data-tip={TIPS.corkReset}
-          disabled={busy || sameLayout(items, baselineRef.current)}
-          onClick={() => void resetLayout()}
-        >
-          Reset layout
-        </button>
+        {canEdit && (
+          <>
+            <button type="button" data-tip={TIPS.corkUndo} disabled={!past.length || busy} onClick={() => void undo()}>
+              Undo
+            </button>
+            <button type="button" data-tip={TIPS.corkRedo} disabled={!future.length || busy} onClick={() => void redo()}>
+              Redo
+            </button>
+            <button
+              type="button"
+              data-tip={TIPS.corkReset}
+              disabled={busy || sameLayout(items, baselineRef.current)}
+              onClick={() => void resetLayout()}
+            >
+              Reset layout
+            </button>
+          </>
+        )}
         {busy && <span className="muted">Saving…</span>}
       </div>
       {error && <p className="error">{error}</p>}
@@ -221,10 +229,10 @@ export default function Corkboard({
             ]
               .filter(Boolean)
               .join(" ")}
-            draggable
+            draggable={canEdit}
             data-tip={TIPS.corkDrag}
             onDragStart={(e) => {
-              if ((e.target as HTMLElement).closest("input, button.open-chapter")) {
+              if (!canEdit || (e.target as HTMLElement).closest("input, button.open-chapter")) {
                 e.preventDefault();
                 return;
               }
@@ -248,6 +256,7 @@ export default function Corkboard({
             }}
             onDrop={(e) => {
               e.preventDefault();
+              if (!canEdit) return;
               const fromId = e.dataTransfer.getData("text/plain") || dragIdRef.current;
               setOverId(null);
               setDraggingId(null);
@@ -259,9 +268,11 @@ export default function Corkboard({
             <input
               className="cork-title"
               value={it.title}
+              readOnly={!canEdit}
               draggable={false}
               data-tip={TIPS.corkRename}
               onFocus={() => {
+                if (!canEdit) return;
                 editStartTitle.current[it.id] = it.title;
               }}
               onChange={(e) =>

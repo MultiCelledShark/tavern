@@ -5,13 +5,15 @@ use chrono::{Duration, Utc};
 use rand::rngs::OsRng;
 use rand::RngCore;
 use sha2::{Digest, Sha256};
-use sqlx::sqlite::{SqliteConnectOptions, SqlitePoolOptions};
+use sqlx::sqlite::{SqliteConnectOptions, SqliteJournalMode, SqlitePoolOptions, SqliteSynchronous};
 use sqlx::{Row, SqlitePool};
 use std::path::Path;
 use std::str::FromStr;
+use std::time::Duration as StdDuration;
 use tavern_core::{
     default_panel_layout_for, default_template_pages, default_theme, Element, ElementLink, GrantRole,
-    ModuleType, Page, Panel, PanelLayout, PanelType, Project, ProjectGrant, Template, User,
+    ModuleType, Page, Panel, PanelLayout, PanelType, Project, ProjectGrant, ProjectInvite, Template,
+    User,
 };
 use uuid::Uuid;
 
@@ -27,9 +29,12 @@ impl Db {
         let url = format!("sqlite://{}?mode=rwc", db_path.display());
         let options = SqliteConnectOptions::from_str(&url)?
             .create_if_missing(true)
-            .foreign_keys(true);
+            .foreign_keys(true)
+            .journal_mode(SqliteJournalMode::Wal)
+            .synchronous(SqliteSynchronous::Normal)
+            .busy_timeout(StdDuration::from_secs(8));
         let pool = SqlitePoolOptions::new()
-            .max_connections(8)
+            .max_connections(16)
             .connect_with(options)
             .await?;
         let db = Self { pool };
@@ -42,8 +47,12 @@ impl Db {
     }
 
     async fn migrate(&self) -> Result<()> {
-        let sql = include_str!("migrations/001_init.sql");
-        sqlx::raw_sql(sql).execute(&self.pool).await?;
+        sqlx::raw_sql(include_str!("migrations/001_init.sql"))
+            .execute(&self.pool)
+            .await?;
+        sqlx::raw_sql(include_str!("migrations/002_hardening.sql"))
+            .execute(&self.pool)
+            .await?;
         Ok(())
     }
 
@@ -196,16 +205,21 @@ impl Db {
             .collect())
     }
 
+    fn hash_secret(token: &str) -> String {
+        hex::encode(Sha256::digest(token.as_bytes()))
+    }
+
     pub async fn create_session(&self, user_id: Uuid) -> Result<String> {
         let mut bytes = [0u8; 32];
         OsRng.fill_bytes(&mut bytes);
-        let token = hex::encode(Sha256::digest(bytes));
+        let token = hex::encode(bytes);
+        let token_hash = Self::hash_secret(&token);
         let now = Utc::now();
         let expires = now + Duration::days(30);
         sqlx::query(
             "INSERT INTO sessions (token, user_id, expires_at, created_at) VALUES (?, ?, ?, ?)",
         )
-        .bind(&token)
+        .bind(&token_hash)
         .bind(user_id.to_string())
         .bind(expires.to_rfc3339())
         .bind(now.to_rfc3339())
@@ -215,11 +229,12 @@ impl Db {
     }
 
     pub async fn user_for_session(&self, token: &str) -> Result<Option<User>> {
+        let token_hash = Self::hash_secret(token);
         let row = sqlx::query(
             "SELECT u.id, u.username, u.is_admin, u.created_at, s.expires_at
              FROM sessions s JOIN users u ON u.id = s.user_id WHERE s.token = ?",
         )
-        .bind(token)
+        .bind(&token_hash)
         .fetch_optional(&self.pool)
         .await?;
         let Some(r) = row else {
@@ -228,7 +243,7 @@ impl Db {
         let expires = parse_dt(r.get::<String, _>("expires_at"));
         if expires < Utc::now() {
             let _ = sqlx::query("DELETE FROM sessions WHERE token = ?")
-                .bind(token)
+                .bind(&token_hash)
                 .execute(&self.pool)
                 .await;
             return Ok(None);
@@ -242,8 +257,17 @@ impl Db {
     }
 
     pub async fn delete_session(&self, token: &str) -> Result<()> {
+        let token_hash = Self::hash_secret(token);
         sqlx::query("DELETE FROM sessions WHERE token = ?")
-            .bind(token)
+            .bind(&token_hash)
+            .execute(&self.pool)
+            .await?;
+        Ok(())
+    }
+
+    pub async fn purge_expired_sessions(&self) -> Result<()> {
+        sqlx::query("DELETE FROM sessions WHERE expires_at < ?")
+            .bind(Utc::now().to_rfc3339())
             .execute(&self.pool)
             .await?;
         Ok(())
@@ -254,9 +278,6 @@ impl Db {
         user: &User,
         project_id: Uuid,
     ) -> Result<Option<GrantRole>> {
-        if user.is_admin {
-            return Ok(Some(GrantRole::Owner));
-        }
         let row = sqlx::query(
             "SELECT owner_id FROM projects WHERE id = ?",
         )
@@ -324,28 +345,29 @@ impl Db {
         Ok(row.map(|r| map_project(r)))
     }
 
-    pub async fn list_projects_for_user(&self, user: &User) -> Result<Vec<Project>> {
-        let rows = if user.is_admin {
-            sqlx::query(
-                "SELECT id, title, synopsis, owner_id, theme_json, created_at, updated_at
-                 FROM projects ORDER BY updated_at DESC",
-            )
-            .fetch_all(&self.pool)
-            .await?
-        } else {
-            sqlx::query(
-                "SELECT p.id, p.title, p.synopsis, p.owner_id, p.theme_json, p.created_at, p.updated_at
-                 FROM projects p
-                 LEFT JOIN project_grants g ON g.project_id = p.id AND g.user_id = ?
-                 WHERE p.owner_id = ? OR g.user_id IS NOT NULL
-                 ORDER BY p.updated_at DESC",
-            )
-            .bind(user.id.to_string())
-            .bind(user.id.to_string())
-            .fetch_all(&self.pool)
-            .await?
-        };
-        Ok(rows.into_iter().map(map_project).collect())
+    pub async fn list_projects_for_user(&self, user: &User) -> Result<Vec<(Project, GrantRole)>> {
+        let uid = user.id.to_string();
+        let rows = sqlx::query(
+            "SELECT p.id, p.title, p.synopsis, p.owner_id, p.theme_json, p.created_at, p.updated_at,
+                    CASE WHEN p.owner_id = ? THEN 'owner' ELSE COALESCE(g.role, 'viewer') END AS my_role
+             FROM projects p
+             LEFT JOIN project_grants g ON g.project_id = p.id AND g.user_id = ?
+             WHERE p.owner_id = ? OR g.user_id IS NOT NULL
+             ORDER BY p.updated_at DESC",
+        )
+        .bind(&uid)
+        .bind(&uid)
+        .bind(&uid)
+        .fetch_all(&self.pool)
+        .await?;
+        Ok(rows
+            .into_iter()
+            .map(|r| {
+                let role =
+                    GrantRole::parse(&r.get::<String, _>("my_role")).unwrap_or(GrantRole::Viewer);
+                (map_project(r), role)
+            })
+            .collect())
     }
 
     pub async fn update_project(
@@ -424,6 +446,96 @@ impl Db {
             .execute(&self.pool)
             .await?;
         Ok(())
+    }
+
+    pub async fn create_invite(
+        &self,
+        project_id: Uuid,
+        created_by: Uuid,
+        role: GrantRole,
+    ) -> Result<(String, ProjectInvite)> {
+        let id = Uuid::new_v4();
+        let mut bytes = [0u8; 32];
+        OsRng.fill_bytes(&mut bytes);
+        let token = hex::encode(bytes);
+        let token_hash = Self::hash_secret(&token);
+        let now = Utc::now();
+        let expires = now + Duration::days(7);
+        sqlx::query(
+            "INSERT INTO project_invites (id, token_hash, project_id, role, created_by, expires_at, created_at, used_at)
+             VALUES (?, ?, ?, ?, ?, ?, ?, NULL)",
+        )
+        .bind(id.to_string())
+        .bind(&token_hash)
+        .bind(project_id.to_string())
+        .bind(role.as_str())
+        .bind(created_by.to_string())
+        .bind(expires.to_rfc3339())
+        .bind(now.to_rfc3339())
+        .execute(&self.pool)
+        .await?;
+        Ok((
+            token,
+            ProjectInvite {
+                id,
+                project_id,
+                role,
+                created_by,
+                expires_at: expires,
+                created_at: now,
+                used_at: None,
+            },
+        ))
+    }
+
+    pub async fn list_invites(&self, project_id: Uuid) -> Result<Vec<ProjectInvite>> {
+        let rows = sqlx::query(
+            "SELECT id, project_id, role, created_by, expires_at, created_at, used_at
+             FROM project_invites WHERE project_id = ? AND used_at IS NULL
+             ORDER BY created_at DESC",
+        )
+        .bind(project_id.to_string())
+        .fetch_all(&self.pool)
+        .await?;
+        Ok(rows.into_iter().map(map_invite).collect())
+    }
+
+    pub async fn delete_invite(&self, project_id: Uuid, invite_id: Uuid) -> Result<()> {
+        sqlx::query("DELETE FROM project_invites WHERE id = ? AND project_id = ? AND used_at IS NULL")
+            .bind(invite_id.to_string())
+            .bind(project_id.to_string())
+            .execute(&self.pool)
+            .await?;
+        Ok(())
+    }
+
+    pub async fn accept_invite(&self, token: &str) -> Result<Option<(Uuid, GrantRole)>> {
+        let token_hash = Self::hash_secret(token);
+        let row = sqlx::query(
+            "SELECT id, project_id, role, expires_at, used_at FROM project_invites WHERE token_hash = ?",
+        )
+        .bind(&token_hash)
+        .fetch_optional(&self.pool)
+        .await?;
+        let Some(r) = row else {
+            return Ok(None);
+        };
+        if r.get::<Option<String>, _>("used_at").is_some() {
+            return Ok(None);
+        }
+        let expires = parse_dt(r.get::<String, _>("expires_at"));
+        if expires < Utc::now() {
+            return Ok(None);
+        }
+        let invite_id: String = r.get("id");
+        let project_id = Uuid::parse_str(r.get::<String, _>("project_id").as_str()).unwrap();
+        let role = GrantRole::parse_shareable(&r.get::<String, _>("role")).unwrap_or(GrantRole::Viewer);
+        sqlx::query("UPDATE project_invites SET used_at = ? WHERE id = ?")
+            .bind(Utc::now().to_rfc3339())
+            .bind(&invite_id)
+            .execute(&self.pool)
+            .await?;
+        Ok(Some((project_id, role)))
     }
 
     pub async fn create_element(
@@ -822,6 +934,17 @@ impl Db {
         Ok(rows.into_iter().map(map_link).collect())
     }
 
+    pub async fn get_link(&self, id: Uuid) -> Result<Option<ElementLink>> {
+        let row = sqlx::query(
+            "SELECT id, project_id, from_element_id, to_element_id, label, link_type, metadata
+             FROM element_links WHERE id = ?",
+        )
+        .bind(id.to_string())
+        .fetch_optional(&self.pool)
+        .await?;
+        Ok(row.map(map_link))
+    }
+
     pub async fn delete_link(&self, id: Uuid) -> Result<()> {
         sqlx::query("DELETE FROM element_links WHERE id = ?")
             .bind(id.to_string())
@@ -830,16 +953,30 @@ impl Db {
         Ok(())
     }
 
-    pub async fn get_manuscript(&self, element_id: Uuid) -> Result<(String, i64)> {
+    pub async fn element_in_project(&self, element_id: Uuid, project_id: Uuid) -> Result<bool> {
+        Ok(self
+            .get_element(element_id)
+            .await?
+            .map(|el| el.project_id == project_id)
+            .unwrap_or(false))
+    }
+
+    pub async fn get_manuscript(&self, element_id: Uuid) -> Result<(String, i64, String)> {
         let row = sqlx::query(
-            "SELECT markdown, word_goal FROM manuscript_bodies WHERE element_id = ?",
+            "SELECT markdown, word_goal, updated_at FROM manuscript_bodies WHERE element_id = ?",
         )
         .bind(element_id.to_string())
         .fetch_optional(&self.pool)
         .await?;
         Ok(row
-            .map(|r| (r.get("markdown"), r.get("word_goal")))
-            .unwrap_or_else(|| (String::new(), 0)))
+            .map(|r| {
+                (
+                    r.get("markdown"),
+                    r.get("word_goal"),
+                    r.get::<String, _>("updated_at"),
+                )
+            })
+            .unwrap_or_else(|| (String::new(), 0, String::new())))
     }
 
     pub async fn set_manuscript(
@@ -847,8 +984,15 @@ impl Db {
         element_id: Uuid,
         markdown: &str,
         word_goal: i64,
-    ) -> Result<()> {
-        let now = Utc::now();
+        expected_updated_at: Option<&str>,
+    ) -> Result<Option<String>> {
+        let (_, _, current_at) = self.get_manuscript(element_id).await?;
+        if let Some(expected) = expected_updated_at {
+            if !current_at.is_empty() && current_at != expected {
+                return Ok(None);
+            }
+        }
+        let now = Utc::now().to_rfc3339();
         sqlx::query(
             "INSERT INTO manuscript_bodies (element_id, markdown, word_goal, updated_at)
              VALUES (?, ?, ?, ?)
@@ -857,15 +1001,15 @@ impl Db {
         .bind(element_id.to_string())
         .bind(markdown)
         .bind(word_goal)
-        .bind(now.to_rfc3339())
+        .bind(&now)
         .execute(&self.pool)
         .await?;
         sqlx::query("UPDATE elements SET updated_at = ? WHERE id = ?")
-            .bind(now.to_rfc3339())
+            .bind(&now)
             .bind(element_id.to_string())
             .execute(&self.pool)
             .await?;
-        Ok(())
+        Ok(Some(now))
     }
 
     pub async fn save_template(
@@ -1024,5 +1168,19 @@ fn map_template(r: sqlx::sqlite::SqliteRow) -> Template {
         pages_json: serde_json::from_str(&r.get::<String, _>("pages_json"))
             .unwrap_or_else(|_| serde_json::json!([])),
         created_at: parse_dt(r.get("created_at")),
+    }
+}
+
+fn map_invite(r: sqlx::sqlite::SqliteRow) -> ProjectInvite {
+    ProjectInvite {
+        id: Uuid::parse_str(r.get::<String, _>("id").as_str()).unwrap(),
+        project_id: Uuid::parse_str(r.get::<String, _>("project_id").as_str()).unwrap(),
+        role: GrantRole::parse_shareable(&r.get::<String, _>("role")).unwrap_or(GrantRole::Viewer),
+        created_by: Uuid::parse_str(r.get::<String, _>("created_by").as_str()).unwrap(),
+        expires_at: parse_dt(r.get("expires_at")),
+        created_at: parse_dt(r.get("created_at")),
+        used_at: r
+            .get::<Option<String>, _>("used_at")
+            .map(parse_dt),
     }
 }

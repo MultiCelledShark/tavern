@@ -2,16 +2,18 @@ import { useEditor, EditorContent } from "@tiptap/react";
 import StarterKit from "@tiptap/starter-kit";
 import Placeholder from "@tiptap/extension-placeholder";
 import { useEffect, useState } from "react";
-import { api, Element } from "../api/client";
+import { api, ConflictError, Element } from "../api/client";
 import { TIPS } from "../tips";
 
 export default function ManuscriptEditor({
   element,
   allElements,
+  canEdit,
   onRenamed,
 }: {
   element: Element;
   allElements: Element[];
+  canEdit: boolean;
   onRenamed: (title: string) => Promise<void>;
 }) {
   const [title, setTitle] = useState(element.title);
@@ -20,6 +22,8 @@ export default function ManuscriptEditor({
   const [wordCount, setWordCount] = useState(0);
   const [sourceMode, setSourceMode] = useState(false);
   const [saved, setSaved] = useState(true);
+  const [updatedAt, setUpdatedAt] = useState("");
+  const [conflict, setConflict] = useState(false);
 
   const editor = useEditor({
     extensions: [
@@ -27,6 +31,7 @@ export default function ManuscriptEditor({
       Placeholder.configure({ placeholder: "Start writing your chapter…" }),
     ],
     content: "",
+    editable: canEdit,
     onUpdate: ({ editor: ed }) => {
       const text = ed.getText();
       setWordCount(text.split(/\s+/).filter(Boolean).length);
@@ -42,6 +47,8 @@ export default function ManuscriptEditor({
       setMarkdown(body.markdown);
       setWordGoal(body.word_goal);
       setWordCount(body.word_count);
+      setUpdatedAt(body.updated_at);
+      setConflict(false);
       if (editor) {
         // Prefer treating stored content as markdown-ish plain/HTML hybrid
         const html = markdownToSimpleHtml(body.markdown);
@@ -51,12 +58,33 @@ export default function ManuscriptEditor({
     })();
   }, [element.id]); // eslint-disable-line react-hooks/exhaustive-deps
 
+  useEffect(() => {
+    editor?.setEditable(canEdit);
+  }, [editor, canEdit]);
+
   async function save() {
     const md = sourceMode ? markdown : htmlToMarkdown(editor?.getHTML() || markdown);
-    const res = await api.saveManuscript(element.id, md, wordGoal);
-    setMarkdown(res.markdown);
-    setWordCount(res.word_count);
-    setSaved(true);
+    try {
+      const res = await api.saveManuscript(element.id, md, wordGoal, updatedAt);
+      setMarkdown(res.markdown);
+      setWordCount(res.word_count);
+      setUpdatedAt(res.updated_at);
+      setSaved(true);
+      setConflict(false);
+    } catch (e) {
+      if (e instanceof ConflictError) {
+        setConflict(true);
+        const html = markdownToSimpleHtml(e.body.markdown);
+        editor?.commands.setContent(html || "<p></p>");
+        setMarkdown(e.body.markdown);
+        setWordGoal(e.body.word_goal);
+        setWordCount(e.body.word_count);
+        setUpdatedAt(e.body.updated_at);
+        setSaved(true);
+        return;
+      }
+      throw e;
+    }
   }
 
   const suggestions = allElements
@@ -68,9 +96,10 @@ export default function ManuscriptEditor({
       <div className="manuscript-toolbar">
         <input
           value={title}
+          readOnly={!canEdit}
           onChange={(e) => setTitle(e.target.value)}
           onBlur={() => {
-            if (title !== element.title) onRenamed(title);
+            if (canEdit && title !== element.title) onRenamed(title);
           }}
           style={{ fontFamily: "var(--font-display)", fontSize: "1.35rem", fontWeight: 700, maxWidth: 360 }}
           data-tip={TIPS.msTitle}
@@ -88,6 +117,7 @@ export default function ManuscriptEditor({
             type="number"
             style={{ width: 90 }}
             value={wordGoal}
+            disabled={!canEdit}
             onChange={(e) => {
               setWordGoal(Number(e.target.value));
               setSaved(false);
@@ -98,9 +128,16 @@ export default function ManuscriptEditor({
           {wordCount}
           {wordGoal ? ` / ${wordGoal}` : ""} words
         </span>
-        <button className="primary" data-tip={TIPS.msSave} onClick={save}>
-          {saved ? "Saved" : "Save"}
-        </button>
+        {canEdit && (
+          <button className="primary" data-tip={TIPS.msSave} onClick={save}>
+            {saved ? "Saved" : "Save"}
+          </button>
+        )}
+        {conflict && (
+          <span className="error" style={{ fontSize: "0.85rem" }}>
+            Reloaded someone else’s newer save
+          </span>
+        )}
       </div>
 
       {sourceMode ? (
@@ -108,6 +145,7 @@ export default function ManuscriptEditor({
           className="editor-surface"
           style={{ fontFamily: "var(--font-mono)", minHeight: "60vh" }}
           value={markdown}
+          readOnly={!canEdit}
           data-tip={TIPS.msEditor}
           onChange={(e) => {
             setMarkdown(e.target.value);
@@ -121,6 +159,7 @@ export default function ManuscriptEditor({
         </div>
       )}
 
+      {canEdit && (
       <div className="muted" style={{ fontSize: "0.9rem" }}>
         Quick links:{" "}
         {suggestions.map((s) => (
@@ -143,6 +182,7 @@ export default function ManuscriptEditor({
           </button>
         ))}
       </div>
+      )}
     </div>
   );
 }

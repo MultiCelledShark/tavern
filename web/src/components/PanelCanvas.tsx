@@ -50,14 +50,14 @@ export default function PanelCanvas({
     setTitle(element.title);
     (async () => {
       let list = await api.pages(element.id);
-      if (!list.length) {
+      if (!list.length && canEdit) {
         await api.createPage(element.id, "Overview");
         list = await api.pages(element.id);
       }
       setPages(list);
       setPageId(list[0]?.id || null);
     })();
-  }, [element.id]);
+  }, [element.id, canEdit]);
 
   useEffect(() => {
     if (!pageId) return;
@@ -108,9 +108,10 @@ export default function PanelCanvas({
       <div className="row" style={{ marginBottom: "0.85rem", flexWrap: "wrap" }}>
         <input
           value={title}
+          readOnly={!canEdit}
           onChange={(e) => setTitle(e.target.value)}
           onBlur={() => {
-            if (title !== element.title) onTitle(title);
+            if (canEdit && title !== element.title) onTitle(title);
           }}
           style={{ fontFamily: "var(--font-display)", fontSize: "1.4rem", fontWeight: 700 }}
           data-tip={TIPS.elementTitle}
@@ -176,7 +177,10 @@ export default function PanelCanvas({
           rowHeight={36}
           width={width}
           draggableHandle=".drag-handle"
+          isDraggable={canEdit}
+          isResizable={canEdit}
           onDragStop={async (l) => {
+            if (!canEdit) return;
             for (const item of l) {
               const panel = panels.find((p) => p.id === item.i);
               if (!panel) continue;
@@ -186,6 +190,7 @@ export default function PanelCanvas({
             }
           }}
           onResizeStop={async (l) => {
+            if (!canEdit) return;
             for (const item of l) {
               const panel = panels.find((p) => p.id === item.i);
               if (!panel) continue;
@@ -203,12 +208,15 @@ export default function PanelCanvas({
                 </span>
                 <input
                   value={panel.title}
+                  readOnly={!canEdit}
                   onChange={(e) =>
                     setPanels((all) =>
                       all.map((p) => (p.id === panel.id ? { ...p, title: e.target.value } : p))
                     )
                   }
-                  onBlur={() => persistPanel(panel, { title: panel.title })}
+                  onBlur={() => {
+                    if (canEdit) persistPanel(panel, { title: panel.title });
+                  }}
                   style={{ border: "none", background: "transparent", padding: 0 }}
                   data-tip={TIPS.panelTitle}
                 />

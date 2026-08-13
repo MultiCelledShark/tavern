@@ -1,9 +1,14 @@
 pub mod auth;
 pub mod routes;
 pub mod state;
+mod rate_limit;
+mod security;
 
 use anyhow::Result;
+use axum::extract::DefaultBodyLimit;
+use axum::middleware;
 use axum::Router;
+use rate_limit::RateLimiter;
 use state::AppState;
 use std::sync::Arc;
 use tavern_core::Config;
@@ -27,12 +32,20 @@ pub async fn build_state(config: Config) -> Result<Arc<AppState>> {
         force_password,
     )
     .await?;
-    Ok(Arc::new(AppState { db, config }))
+    let dummy_password_hash = Db::hash_password("tavern-timing-dummy-not-a-login")?;
+    Ok(Arc::new(AppState {
+        db,
+        config,
+        limiter: RateLimiter::new(),
+        dummy_password_hash,
+    }))
 }
 
 pub fn app(state: Arc<AppState>) -> Router {
     Router::new()
         .merge(routes::router())
+        .layer(DefaultBodyLimit::max(32 * 1024 * 1024))
+        .layer(middleware::from_fn(security::security_headers))
         .layer(TraceLayer::new_for_http())
         .with_state(state)
 }

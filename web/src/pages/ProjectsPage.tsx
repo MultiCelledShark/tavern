@@ -75,6 +75,13 @@ export default function ProjectsPage({
           {user.is_admin ? " · admin" : ""}
         </span>
         <div className="spacer" />
+        {user.is_admin && (
+          <Link to="/users">
+            <button type="button" data-tip={TIPS.accounts}>
+              Accounts
+            </button>
+          </Link>
+        )}
         <button type="button" data-tip={TIPS.logout} onClick={() => onLogout()}>
           Log out
         </button>
@@ -137,6 +144,9 @@ export default function ProjectsPage({
                 <p className="muted" style={{ margin: 0 }}>
                   {p.synopsis || "No synopsis yet"}
                 </p>
+                <p className="muted" style={{ margin: "0.35rem 0 0", fontSize: "0.85rem" }}>
+                  {p.my_role === "owner" ? "Owned by you" : `Shared with you · ${p.my_role}`}
+                </p>
               </Link>
               <div className="row" style={{ marginTop: "0.75rem" }}>
                 <Link to={`/project/${p.id}`}>
@@ -144,18 +154,20 @@ export default function ProjectsPage({
                     Open
                   </button>
                 </Link>
-                <button
-                  type="button"
-                  className="danger"
-                  data-tip={TIPS.deleteProject}
-                  onClick={async () => {
-                    if (!confirm(`Delete project “${p.title}”?`)) return;
-                    await api.deleteProject(p.id);
-                    await refresh();
-                  }}
-                >
-                  Delete
-                </button>
+                {p.my_role === "owner" && (
+                  <button
+                    type="button"
+                    className="danger"
+                    data-tip={TIPS.deleteProject}
+                    onClick={async () => {
+                      if (!confirm(`Delete project “${p.title}”?`)) return;
+                      await api.deleteProject(p.id);
+                      await refresh();
+                    }}
+                  >
+                    Delete
+                  </button>
+                )}
               </div>
             </div>
           ))}

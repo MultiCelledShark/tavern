@@ -4,6 +4,8 @@ export type User = {
   is_admin: boolean;
 };
 
+export type GrantRole = "owner" | "editor" | "viewer";
+
 export type Project = {
   id: string;
   title: string;
@@ -12,7 +14,31 @@ export type Project = {
   theme_json: Record<string, string>;
   created_at: string;
   updated_at: string;
+  my_role: GrantRole;
 };
+
+export function canEditRole(role?: GrantRole) {
+  return role === "owner" || role === "editor";
+}
+
+export function canManageRole(role?: GrantRole) {
+  return role === "owner";
+}
+
+export type ManuscriptBody = {
+  markdown: string;
+  word_goal: number;
+  word_count: number;
+  updated_at: string;
+};
+
+export class ConflictError extends Error {
+  body: ManuscriptBody;
+  constructor(body: ManuscriptBody) {
+    super("edit conflict");
+    this.body = body;
+  }
+}
 
 export type ModuleType =
   | "manuscript"
@@ -117,10 +143,13 @@ async function req<T>(path: string, init?: RequestInit): Promise<T> {
 export const api = {
   me: () => req<User>("/api/auth/me"),
   login: (username: string, password: string) =>
-    req<{ token: string; user: User }>("/api/auth/login", {
+    req<{ user: User }>("/api/auth/login", {
       method: "POST",
       body: JSON.stringify({ username, password }),
     }),
+  listUsers: () => req<User[]>("/api/users"),
+  createUser: (body: { username: string; password: string; is_admin?: boolean }) =>
+    req<User>("/api/users", { method: "POST", body: JSON.stringify(body) }),
   logout: () => req<void>("/api/auth/logout", { method: "POST" }),
   projects: () => req<Project[]>("/api/projects"),
   createProject: (title: string, synopsis = "") =>
@@ -187,15 +216,39 @@ export const api = {
     }),
   deleteLink: (id: string) => req<void>(`/api/links/${id}`, { method: "DELETE" }),
   manuscript: (elementId: string) =>
-    req<{ markdown: string; word_goal: number; word_count: number }>(
-      `/api/elements/${elementId}/manuscript`
-    ),
-  saveManuscript: (elementId: string, markdown: string, word_goal?: number) =>
-    req<{ markdown: string; word_goal: number; word_count: number }>(
-      `/api/elements/${elementId}/manuscript`,
-      { method: "PUT", body: JSON.stringify({ markdown, word_goal }) }
-    ),
+    req<ManuscriptBody>(`/api/elements/${elementId}/manuscript`),
+  saveManuscript: async (
+    elementId: string,
+    markdown: string,
+    word_goal: number | undefined,
+    updated_at?: string
+  ) => {
+    const res = await fetch(`/api/elements/${elementId}/manuscript`, {
+      method: "PUT",
+      credentials: "include",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ markdown, word_goal, updated_at }),
+    });
+    const body = (await res.json().catch(() => ({}))) as ManuscriptBody & { error?: string };
+    if (res.status === 409) {
+      throw new ConflictError(body);
+    }
+    if (!res.ok) {
+      throw new Error(body.error || res.statusText);
+    }
+    return body as ManuscriptBody;
+  },
   grants: (projectId: string) => req<ProjectGrant[]>(`/api/projects/${projectId}/grants`),
+  createInvite: (projectId: string, role: string) =>
+    req<{ token: string; invite: { id: string; role: string; expires_at: string } }>(
+      `/api/projects/${projectId}/invites`,
+      { method: "POST", body: JSON.stringify({ role }) }
+    ),
+  acceptInvite: (token: string) =>
+    req<{ project_id: string; role: string }>("/api/invites/accept", {
+      method: "POST",
+      body: JSON.stringify({ token }),
+    }),
   upsertGrant: (projectId: string, body: { username?: string; user_id?: string; role: string }) =>
     req<void>(`/api/projects/${projectId}/grants`, {
       method: "POST",

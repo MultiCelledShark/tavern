@@ -228,6 +228,15 @@ impl GrantRole {
         }
     }
 
+    /// Roles that can be granted or invited. Owner stays on `projects.owner_id`.
+    pub fn parse_shareable(s: &str) -> Option<Self> {
+        match s {
+            "editor" => Some(Self::Editor),
+            "viewer" => Some(Self::Viewer),
+            _ => None,
+        }
+    }
+
     pub fn can_edit(self) -> bool {
         matches!(self, Self::Owner | Self::Editor)
     }
@@ -256,12 +265,31 @@ pub struct Project {
     pub updated_at: DateTime<Utc>,
 }
 
+/// Project payload with the caller's grant on that project.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ProjectView {
+    #[serde(flatten)]
+    pub project: Project,
+    pub my_role: GrantRole,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ProjectGrant {
     pub project_id: Uuid,
     pub user_id: Uuid,
     pub role: GrantRole,
     pub username: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ProjectInvite {
+    pub id: Uuid,
+    pub project_id: Uuid,
+    pub role: GrantRole,
+    pub created_by: Uuid,
+    pub expires_at: DateTime<Utc>,
+    pub created_at: DateTime<Utc>,
+    pub used_at: Option<DateTime<Utc>>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

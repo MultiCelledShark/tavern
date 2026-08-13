@@ -1,5 +1,5 @@
-use axum::extract::{Multipart, Path, Query, State};
-use axum::http::{header, StatusCode};
+use axum::extract::{ConnectInfo, Multipart, Path, Query, State};
+use axum::http::{header, HeaderMap, StatusCode};
 use axum::response::{Html, IntoResponse, Response};
 use axum::routing::{delete, get, post, put};
 use axum::{Json, Router};
@@ -7,9 +7,12 @@ use axum_extra::extract::cookie::{Cookie, CookieJar, SameSite};
 use rust_embed::Embed;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
+use std::net::SocketAddr;
 use std::sync::Arc;
+use std::time::Duration;
 use tavern_core::{
-    default_panel_layout_for, Element, GrantRole, ModuleType, PanelLayout, PanelType, User,
+    default_panel_layout_for, Element, GrantRole, ModuleType, PanelLayout, PanelType, ProjectView,
+    User,
 };
 use tavern_export::{
     compile_manuscript_markdown, compile_world_bible_markdown, elements_to_intermediate,
@@ -18,6 +21,7 @@ use tavern_export::{
 use uuid::Uuid;
 
 use crate::auth::{AdminUser, AuthUser};
+use crate::security::client_ip;
 use crate::state::AppState;
 
 #[derive(Embed)]
@@ -45,6 +49,15 @@ pub fn router() -> Router<Arc<AppState>> {
             "/api/projects/{id}/grants/{user_id}",
             delete(delete_grant),
         )
+        .route(
+            "/api/projects/{id}/invites",
+            get(list_invites).post(create_invite),
+        )
+        .route(
+            "/api/projects/{id}/invites/{invite_id}",
+            delete(revoke_invite),
+        )
+        .route("/api/invites/accept", post(accept_invite))
         .route(
             "/api/projects/{id}/elements",
             get(list_elements).post(create_element),
@@ -118,34 +131,45 @@ struct LoginBody {
 
 async fn login(
     State(state): State<Arc<AppState>>,
+    ConnectInfo(addr): ConnectInfo<SocketAddr>,
+    headers: HeaderMap,
     jar: CookieJar,
     Json(body): Json<LoginBody>,
 ) -> Result<(CookieJar, Json<serde_json::Value>), ApiError> {
-    let user = state
-        .db
-        .get_user_by_username(&body.username)
-        .await?
-        .ok_or(ApiError::unauthorized("invalid credentials"))?;
+    let ip = client_ip(&headers, Some(addr), state.config.trust_proxy);
+    if !state
+        .limiter
+        .check(&format!("login:ip:{ip}"), 10, Duration::from_secs(15 * 60))
+        || !state.limiter.check(
+            &format!("login:user:{}", body.username),
+            8,
+            Duration::from_secs(15 * 60),
+        )
+    {
+        return Err(ApiError::limited());
+    }
     let hash = state
         .db
         .get_password_hash(&body.username)
         .await?
-        .ok_or(ApiError::unauthorized("invalid credentials"))?;
-    if !tavern_db::Db::verify_password(&body.password, &hash)? {
+        .unwrap_or_else(|| state.dummy_password_hash.clone());
+    let password_ok = tavern_db::Db::verify_password(&body.password, &hash)?;
+    let user = state.db.get_user_by_username(&body.username).await?;
+    if !password_ok || user.is_none() {
         return Err(ApiError::unauthorized("invalid credentials"));
     }
+    let user = user.unwrap();
+    let _ = state.db.purge_expired_sessions().await;
     let token = state.db.create_session(user.id).await?;
-    let mut cookie = Cookie::new("tavern_session", token.clone());
+    let mut cookie = Cookie::new("tavern_session", token);
     cookie.set_http_only(true);
     cookie.set_path("/");
     cookie.set_same_site(SameSite::Lax);
-    if state.config.cookie_secure {
+    cookie.set_max_age(cookie::time::Duration::days(30));
+    if state.config.cookie_secure || state.config.trust_proxy {
         cookie.set_secure(true);
     }
-    Ok((
-        jar.add(cookie),
-        Json(serde_json::json!({ "token": token, "user": user })),
-    ))
+    Ok((jar.add(cookie), Json(serde_json::json!({ "user": user }))))
 }
 
 async fn logout(
@@ -184,7 +208,17 @@ async fn create_user(
     State(state): State<Arc<AppState>>,
     Json(body): Json<CreateUserBody>,
 ) -> Result<(StatusCode, Json<User>), ApiError> {
+    if !state.limiter.check(
+        &format!("admin:create-user:{}", _admin.0.id),
+        30,
+        Duration::from_secs(60 * 60),
+    ) {
+        return Err(ApiError::limited());
+    }
     tavern_db::Db::validate_password_strength(&body.password)?;
+    if state.db.get_user_by_username(&body.username).await?.is_some() {
+        return Err(ApiError::bad("username taken"));
+    }
     let user = state
         .db
         .create_user(&body.username, &body.password, body.is_admin.unwrap_or(false))
@@ -198,23 +232,35 @@ struct CreateProjectBody {
     synopsis: Option<String>,
 }
 
+fn with_role(project: tavern_core::Project, my_role: GrantRole) -> ProjectView {
+    ProjectView {
+        project,
+        my_role,
+    }
+}
+
 async fn list_projects(
     AuthUser(user): AuthUser,
     State(state): State<Arc<AppState>>,
-) -> Result<Json<Vec<tavern_core::Project>>, ApiError> {
-    Ok(Json(state.db.list_projects_for_user(&user).await?))
+) -> Result<Json<Vec<ProjectView>>, ApiError> {
+    let rows = state.db.list_projects_for_user(&user).await?;
+    Ok(Json(
+        rows.into_iter()
+            .map(|(p, role)| with_role(p, role))
+            .collect(),
+    ))
 }
 
 async fn create_project(
     AuthUser(user): AuthUser,
     State(state): State<Arc<AppState>>,
     Json(body): Json<CreateProjectBody>,
-) -> Result<(StatusCode, Json<tavern_core::Project>), ApiError> {
+) -> Result<(StatusCode, Json<ProjectView>), ApiError> {
     let p = state
         .db
         .create_project(user.id, &body.title, body.synopsis.as_deref().unwrap_or(""))
         .await?;
-    Ok((StatusCode::CREATED, Json(p)))
+    Ok((StatusCode::CREATED, Json(with_role(p, GrantRole::Owner))))
 }
 
 async fn create_tutorial_project(
@@ -225,7 +271,7 @@ async fn create_tutorial_project(
     let (intermediate, report) =
         tavern_import::load_bytes(TUTORIAL.as_bytes(), Some("tutorial_project.json"))?;
     let prepared = tavern_import::prepare(intermediate, report)?;
-    let body = materialize_import(&state, user.id, prepared, TUTORIAL.as_bytes()).await?;
+    let body = materialize_import(&state, user.id, prepared).await?;
     Ok((StatusCode::CREATED, body))
 }
 
@@ -233,14 +279,14 @@ async fn get_project(
     AuthUser(user): AuthUser,
     State(state): State<Arc<AppState>>,
     Path(id): Path<Uuid>,
-) -> Result<Json<tavern_core::Project>, ApiError> {
-    require_access(&state, &user, id).await?;
-    state
+) -> Result<Json<ProjectView>, ApiError> {
+    let role = require_access(&state, &user, id).await?;
+    let p = state
         .db
         .get_project(id)
         .await?
-        .map(Json)
-        .ok_or(ApiError::not_found("project"))
+        .ok_or(ApiError::not_found("project"))?;
+    Ok(Json(with_role(p, role)))
 }
 
 #[derive(Deserialize)]
@@ -255,17 +301,16 @@ async fn update_project(
     State(state): State<Arc<AppState>>,
     Path(id): Path<Uuid>,
     Json(body): Json<UpdateProjectBody>,
-) -> Result<Json<tavern_core::Project>, ApiError> {
-    require_edit(&state, &user, id).await?;
+) -> Result<Json<ProjectView>, ApiError> {
+    let role = require_edit(&state, &user, id).await?;
     let theme = body
         .theme_json
         .unwrap_or_else(tavern_core::default_theme);
-    Ok(Json(
-        state
-            .db
-            .update_project(id, &body.title, &body.synopsis, &theme)
-            .await?,
-    ))
+    let p = state
+        .db
+        .update_project(id, &body.title, &body.synopsis, &theme)
+        .await?;
+    Ok(Json(with_role(p, role)))
 }
 
 async fn delete_project(
@@ -301,21 +346,107 @@ async fn upsert_grant(
     Json(body): Json<GrantBody>,
 ) -> Result<StatusCode, ApiError> {
     require_manage(&state, &user, id).await?;
-    let role = GrantRole::parse(&body.role).ok_or(ApiError::bad("invalid role"))?;
+    if !state.limiter.check(
+        &format!("grant:{}", user.id),
+        30,
+        Duration::from_secs(15 * 60),
+    ) {
+        return Err(ApiError::limited());
+    }
+    let role = GrantRole::parse_shareable(&body.role).ok_or(ApiError::bad("invalid role"))?;
     let uid = if let Some(u) = body.user_id {
         u
     } else if let Some(name) = &body.username {
-        state
-            .db
-            .get_user_by_username(name)
-            .await?
-            .ok_or(ApiError::not_found("user"))?
-            .id
+        match state.db.get_user_by_username(name).await? {
+            Some(u) => u.id,
+            None => return Ok(StatusCode::NO_CONTENT),
+        }
     } else {
         return Err(ApiError::bad("user_id or username required"));
     };
+    if state.db.get_user(uid).await?.is_none() {
+        return Ok(StatusCode::NO_CONTENT);
+    }
     state.db.upsert_grant(id, uid, role).await?;
     Ok(StatusCode::NO_CONTENT)
+}
+
+#[derive(Deserialize)]
+struct InviteBody {
+    role: String,
+}
+
+#[derive(Deserialize)]
+struct AcceptInviteBody {
+    token: String,
+}
+
+async fn list_invites(
+    AuthUser(user): AuthUser,
+    State(state): State<Arc<AppState>>,
+    Path(id): Path<Uuid>,
+) -> Result<Json<Vec<tavern_core::ProjectInvite>>, ApiError> {
+    require_manage(&state, &user, id).await?;
+    Ok(Json(state.db.list_invites(id).await?))
+}
+
+async fn create_invite(
+    AuthUser(user): AuthUser,
+    State(state): State<Arc<AppState>>,
+    Path(id): Path<Uuid>,
+    Json(body): Json<InviteBody>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    require_manage(&state, &user, id).await?;
+    if !state.limiter.check(
+        &format!("invite:{}", user.id),
+        20,
+        Duration::from_secs(15 * 60),
+    ) {
+        return Err(ApiError::limited());
+    }
+    let role = GrantRole::parse_shareable(&body.role).ok_or(ApiError::bad("invalid role"))?;
+    let (token, invite) = state.db.create_invite(id, user.id, role).await?;
+    Ok(Json(serde_json::json!({
+        "token": token,
+        "invite": invite,
+    })))
+}
+
+async fn revoke_invite(
+    AuthUser(user): AuthUser,
+    State(state): State<Arc<AppState>>,
+    Path((id, invite_id)): Path<(Uuid, Uuid)>,
+) -> Result<StatusCode, ApiError> {
+    require_manage(&state, &user, id).await?;
+    state.db.delete_invite(id, invite_id).await?;
+    Ok(StatusCode::NO_CONTENT)
+}
+
+async fn accept_invite(
+    AuthUser(user): AuthUser,
+    State(state): State<Arc<AppState>>,
+    Json(body): Json<AcceptInviteBody>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    if !state.limiter.check(
+        &format!("invite-accept:{}", user.id),
+        20,
+        Duration::from_secs(15 * 60),
+    ) {
+        return Err(ApiError::limited());
+    }
+    let Some((project_id, role)) = state.db.accept_invite(&body.token).await? else {
+        return Err(ApiError::bad("invite is invalid or expired"));
+    };
+    let current = state.db.project_access(&user, project_id).await?;
+    let should_write = match current {
+        Some(existing) if existing.can_manage() => false,
+        Some(existing) if existing.can_edit() && !role.can_edit() => false,
+        _ => true,
+    };
+    if should_write {
+        state.db.upsert_grant(project_id, user.id, role).await?;
+    }
+    Ok(Json(serde_json::json!({ "project_id": project_id, "role": role })))
 }
 
 async fn delete_grant(
@@ -323,7 +454,19 @@ async fn delete_grant(
     State(state): State<Arc<AppState>>,
     Path((id, user_id)): Path<(Uuid, Uuid)>,
 ) -> Result<StatusCode, ApiError> {
-    require_manage(&state, &user, id).await?;
+    let role = require_access(&state, &user, id).await?;
+    if user_id == user.id {
+        if role.can_manage() {
+            return Err(ApiError::bad(
+                "owners cannot leave; delete the project instead",
+            ));
+        }
+        state.db.delete_grant(id, user_id).await?;
+        return Ok(StatusCode::NO_CONTENT);
+    }
+    if !role.can_manage() {
+        return Err(ApiError::forbidden());
+    }
     state.db.delete_grant(id, user_id).await?;
     Ok(StatusCode::NO_CONTENT)
 }
@@ -362,6 +505,11 @@ async fn create_element(
     require_edit(&state, &user, id).await?;
     let module =
         ModuleType::parse(&body.module_type).ok_or(ApiError::bad("invalid module_type"))?;
+    if let Some(parent) = body.parent_id {
+        if !state.db.element_in_project(parent, id).await? {
+            return Err(ApiError::bad("parent is not in this project"));
+        }
+    }
     let el = state
         .db
         .create_element(
@@ -381,12 +529,7 @@ async fn get_element(
     State(state): State<Arc<AppState>>,
     Path(id): Path<Uuid>,
 ) -> Result<Json<Element>, ApiError> {
-    let el = state
-        .db
-        .get_element(id)
-        .await?
-        .ok_or(ApiError::not_found("element"))?;
-    require_access(&state, &user, el.project_id).await?;
+    let el = visible_element(&state, &user, id).await?;
     Ok(Json(el))
 }
 
@@ -404,12 +547,13 @@ async fn update_element(
     Path(id): Path<Uuid>,
     Json(body): Json<UpdateElementBody>,
 ) -> Result<Json<Element>, ApiError> {
-    let el = state
-        .db
-        .get_element(id)
-        .await?
-        .ok_or(ApiError::not_found("element"))?;
+    let el = visible_element(&state, &user, id).await?;
     require_edit(&state, &user, el.project_id).await?;
+    if let Some(parent) = body.parent_id {
+        if !state.db.element_in_project(parent, el.project_id).await? {
+            return Err(ApiError::bad("parent is not in this project"));
+        }
+    }
     Ok(Json(
         state
             .db
@@ -423,11 +567,7 @@ async fn delete_element(
     State(state): State<Arc<AppState>>,
     Path(id): Path<Uuid>,
 ) -> Result<StatusCode, ApiError> {
-    let el = state
-        .db
-        .get_element(id)
-        .await?
-        .ok_or(ApiError::not_found("element"))?;
+    let el = visible_element(&state, &user, id).await?;
     require_edit(&state, &user, el.project_id).await?;
     state.db.delete_element(id).await?;
     Ok(StatusCode::NO_CONTENT)
@@ -445,12 +585,7 @@ async fn list_pages(
     State(state): State<Arc<AppState>>,
     Path(id): Path<Uuid>,
 ) -> Result<Json<Vec<tavern_core::Page>>, ApiError> {
-    let el = state
-        .db
-        .get_element(id)
-        .await?
-        .ok_or(ApiError::not_found("element"))?;
-    require_access(&state, &user, el.project_id).await?;
+    visible_element(&state, &user, id).await?;
     Ok(Json(state.db.list_pages(id).await?))
 }
 
@@ -460,11 +595,7 @@ async fn create_page(
     Path(id): Path<Uuid>,
     Json(body): Json<CreatePageBody>,
 ) -> Result<(StatusCode, Json<tavern_core::Page>), ApiError> {
-    let el = state
-        .db
-        .get_element(id)
-        .await?
-        .ok_or(ApiError::not_found("element"))?;
+    let el = visible_element(&state, &user, id).await?;
     require_edit(&state, &user, el.project_id).await?;
     let page = state
         .db
@@ -491,7 +622,7 @@ async fn update_page(
     Path(id): Path<Uuid>,
     Json(body): Json<UpdatePageBody>,
 ) -> Result<Json<tavern_core::Page>, ApiError> {
-    let pages_el = find_element_for_page(&state, id).await?;
+    let pages_el = visible_element_for_page(&state, &user, id).await?;
     require_edit(&state, &user, pages_el.project_id).await?;
     Ok(Json(
         state
@@ -506,7 +637,7 @@ async fn delete_page(
     State(state): State<Arc<AppState>>,
     Path(id): Path<Uuid>,
 ) -> Result<StatusCode, ApiError> {
-    let el = find_element_for_page(&state, id).await?;
+    let el = visible_element_for_page(&state, &user, id).await?;
     require_edit(&state, &user, el.project_id).await?;
     state.db.delete_page(id).await?;
     Ok(StatusCode::NO_CONTENT)
@@ -527,8 +658,7 @@ async fn list_panels(
     State(state): State<Arc<AppState>>,
     Path(id): Path<Uuid>,
 ) -> Result<Json<Vec<tavern_core::Panel>>, ApiError> {
-    let el = find_element_for_page(&state, id).await?;
-    require_access(&state, &user, el.project_id).await?;
+    visible_element_for_page(&state, &user, id).await?;
     Ok(Json(state.db.list_panels(id).await?))
 }
 
@@ -538,7 +668,7 @@ async fn create_panel(
     Path(id): Path<Uuid>,
     Json(body): Json<CreatePanelBody>,
 ) -> Result<(StatusCode, Json<tavern_core::Panel>), ApiError> {
-    let el = find_element_for_page(&state, id).await?;
+    let el = visible_element_for_page(&state, &user, id).await?;
     require_edit(&state, &user, el.project_id).await?;
     let ptype = PanelType::parse(&body.panel_type).ok_or(ApiError::bad("invalid panel_type"))?;
     let sort = body.sort_order.unwrap_or(0);
@@ -575,7 +705,7 @@ async fn update_panel(
     Path(id): Path<Uuid>,
     Json(body): Json<UpdatePanelBody>,
 ) -> Result<Json<tavern_core::Panel>, ApiError> {
-    let el = find_element_for_panel(&state, id).await?;
+    let el = visible_element_for_panel(&state, &user, id).await?;
     require_edit(&state, &user, el.project_id).await?;
     Ok(Json(
         state
@@ -597,7 +727,7 @@ async fn delete_panel(
     State(state): State<Arc<AppState>>,
     Path(id): Path<Uuid>,
 ) -> Result<StatusCode, ApiError> {
-    let el = find_element_for_panel(&state, id).await?;
+    let el = visible_element_for_panel(&state, &user, id).await?;
     require_edit(&state, &user, el.project_id).await?;
     state.db.delete_panel(id).await?;
     Ok(StatusCode::NO_CONTENT)
@@ -628,6 +758,14 @@ async fn create_link(
     Json(body): Json<CreateLinkBody>,
 ) -> Result<(StatusCode, Json<tavern_core::ElementLink>), ApiError> {
     require_edit(&state, &user, id).await?;
+    if !state
+        .db
+        .element_in_project(body.from_element_id, id)
+        .await?
+        || !state.db.element_in_project(body.to_element_id, id).await?
+    {
+        return Err(ApiError::bad("link endpoints must belong to this project"));
+    }
     let link = state
         .db
         .create_link(
@@ -647,8 +785,18 @@ async fn delete_link(
     State(state): State<Arc<AppState>>,
     Path(id): Path<Uuid>,
 ) -> Result<StatusCode, ApiError> {
-    // look up link via scanning is heavy; require auth and delete
-    let _ = user;
+    let Some(link) = state.db.get_link(id).await? else {
+        return Err(ApiError::not_found("link"));
+    };
+    if state
+        .db
+        .project_access(&user, link.project_id)
+        .await?
+        .is_none()
+    {
+        return Err(ApiError::not_found("link"));
+    }
+    require_edit(&state, &user, link.project_id).await?;
     state.db.delete_link(id).await?;
     Ok(StatusCode::NO_CONTENT)
 }
@@ -658,12 +806,14 @@ struct ManuscriptBody {
     markdown: String,
     word_goal: i64,
     word_count: usize,
+    updated_at: String,
 }
 
 #[derive(Deserialize)]
 struct PutManuscriptBody {
     markdown: String,
     word_goal: Option<i64>,
+    updated_at: Option<String>,
 }
 
 async fn get_manuscript(
@@ -671,18 +821,14 @@ async fn get_manuscript(
     State(state): State<Arc<AppState>>,
     Path(id): Path<Uuid>,
 ) -> Result<Json<ManuscriptBody>, ApiError> {
-    let el = state
-        .db
-        .get_element(id)
-        .await?
-        .ok_or(ApiError::not_found("element"))?;
-    require_access(&state, &user, el.project_id).await?;
-    let (markdown, word_goal) = state.db.get_manuscript(id).await?;
+    visible_element(&state, &user, id).await?;
+    let (markdown, word_goal, updated_at) = state.db.get_manuscript(id).await?;
     let word_count = count_words(&markdown);
     Ok(Json(ManuscriptBody {
         markdown,
         word_goal,
         word_count,
+        updated_at,
     }))
 }
 
@@ -692,22 +838,28 @@ async fn put_manuscript(
     Path(id): Path<Uuid>,
     Json(body): Json<PutManuscriptBody>,
 ) -> Result<Json<ManuscriptBody>, ApiError> {
-    let el = state
-        .db
-        .get_element(id)
-        .await?
-        .ok_or(ApiError::not_found("element"))?;
+    let el = visible_element(&state, &user, id).await?;
     require_edit(&state, &user, el.project_id).await?;
-    let (_, current_goal) = state.db.get_manuscript(id).await?;
+    let (current_md, current_goal, current_at) = state.db.get_manuscript(id).await?;
     let goal = body.word_goal.unwrap_or(current_goal);
-    state
+    let Some(updated_at) = state
         .db
-        .set_manuscript(id, &body.markdown, goal)
-        .await?;
+        .set_manuscript(id, &body.markdown, goal, body.updated_at.as_deref())
+        .await?
+    else {
+        return Err(ApiError::conflict(serde_json::json!({
+            "error": "edit conflict",
+            "markdown": current_md,
+            "word_goal": current_goal,
+            "word_count": count_words(&current_md),
+            "updated_at": current_at,
+        })));
+    };
     Ok(Json(ManuscriptBody {
         word_count: count_words(&body.markdown),
         markdown: body.markdown,
         word_goal: goal,
+        updated_at,
     }))
 }
 
@@ -741,6 +893,9 @@ async fn save_template(
 ) -> Result<(StatusCode, Json<tavern_core::Template>), ApiError> {
     let module =
         ModuleType::parse(&body.module_type).ok_or(ApiError::bad("invalid module_type"))?;
+    if let Some(pid) = body.project_id {
+        require_access(&state, &user, pid).await?;
+    }
     let t = state
         .db
         .save_template(
@@ -767,7 +922,7 @@ async fn export_project(
     Path(id): Path<Uuid>,
     Json(body): Json<ExportBody>,
 ) -> Result<Response, ApiError> {
-    require_access(&state, &user, id).await?;
+    require_edit(&state, &user, id).await?;
     let format = ExportFormat::parse(&body.format).ok_or(ApiError::bad("invalid format"))?;
     let project = state
         .db
@@ -805,7 +960,7 @@ async fn export_project(
             .await?;
         let mut bodies = Vec::new();
         for ch in chapters {
-            let (md, _) = state.db.get_manuscript(ch.id).await?;
+            let (md, _, _) = state.db.get_manuscript(ch.id).await?;
             bodies.push(ChapterBody {
                 title: ch.title,
                 markdown: md,
@@ -843,7 +998,7 @@ async fn backup_project(
     State(state): State<Arc<AppState>>,
     Path(id): Path<Uuid>,
 ) -> Result<Response, ApiError> {
-    require_access(&state, &user, id).await?;
+    require_edit(&state, &user, id).await?;
     let project = state
         .db
         .get_project(id)
@@ -876,11 +1031,9 @@ async fn backup_project(
         &id_to_title,
     );
     let assets = state.config.project_assets_dir(id);
-    let out = state
-        .config
-        .data_dir
-        .join("exports")
-        .join(format!("{}.tavern", sanitize(&project.title)));
+    let out_dir = state.config.data_dir.join("exports").join(id.to_string());
+    std::fs::create_dir_all(&out_dir)?;
+    let out = out_dir.join(format!("{}.tavern", sanitize(&project.title)));
     write_tavern_backup(&out, &intermediate, Some(&assets))?;
     let bytes = std::fs::read(&out)?;
     let filename = format!("{}.tavern", sanitize(&project.title));
@@ -910,9 +1063,9 @@ fn safe_asset_name(original: &str) -> Result<String, ApiError> {
         .and_then(|e| e.to_str())
         .unwrap_or("bin")
         .to_ascii_lowercase();
-    let allowed = ["png", "jpg", "jpeg", "webp", "gif", "svg"];
+    let allowed = ["png", "jpg", "jpeg", "webp", "gif"];
     if !allowed.contains(&ext.as_str()) {
-        return Err(ApiError::bad("only image uploads (png/jpg/webp/gif/svg)"));
+        return Err(ApiError::bad("only image uploads (png/jpg/webp/gif)"));
     }
     Ok(format!("{}.{}", Uuid::new_v4(), ext))
 }
@@ -1001,6 +1154,20 @@ async fn get_asset(
     }
     let path = state.config.project_assets_dir(id).join(&name);
     let bytes = std::fs::read(&path).map_err(|_| ApiError::not_found("asset"))?;
+    let lower = name.to_ascii_lowercase();
+    if lower.ends_with(".svg") || lower.ends_with(".svgz") {
+        return Ok((
+            [
+                (header::CONTENT_TYPE, "application/octet-stream".to_string()),
+                (
+                    header::CONTENT_DISPOSITION,
+                    format!("attachment; filename=\"{name}\""),
+                ),
+            ],
+            bytes,
+        )
+            .into_response());
+    }
     let mime = mime_guess::from_path(&path)
         .first_or_octet_stream()
         .to_string();
@@ -1042,18 +1209,27 @@ async fn import_project(
             );
         }
     }
+    if !state.limiter.check(
+        &format!("import:{}", user.id),
+        10,
+        Duration::from_secs(60 * 60),
+    ) {
+        return Err(ApiError::limited());
+    }
     let bytes = bytes.ok_or(ApiError::bad("file required"))?;
+    if bytes.len() > 32 * 1024 * 1024 {
+        return Err(ApiError::bad("import too large (max 32MB)"));
+    }
     let (intermediate, report) =
         tavern_import::load_bytes(&bytes, filename.as_deref())?;
     let prepared = tavern_import::prepare(intermediate, report)?;
-    materialize_import(&state, user.id, prepared, &bytes).await
+    materialize_import(&state, user.id, prepared).await
 }
 
 async fn materialize_import(
     state: &AppState,
     owner_id: Uuid,
     prepared: tavern_import::PreparedImport,
-    original_bytes: &[u8],
 ) -> Result<Json<serde_json::Value>, ApiError> {
     let project = state
         .db
@@ -1083,7 +1259,7 @@ async fn materialize_import(
 
         if module == ModuleType::Manuscript {
             let md = el.body_markdown.clone().unwrap_or_default();
-            state.db.set_manuscript(created.id, &md, 0).await?;
+            let _ = state.db.set_manuscript(created.id, &md, 0, None).await?;
         } else if !el.panels.is_empty() {
             let pages = state.db.list_pages(created.id).await?;
             for p in pages {
@@ -1175,13 +1351,6 @@ async fn materialize_import(
                 .await?;
         }
     }
-
-    let import_path = state
-        .config
-        .data_dir
-        .join("imports")
-        .join(format!("{}.bin", project.id));
-    let _ = std::fs::write(&import_path, original_bytes);
 
     Ok(Json(serde_json::json!({
         "project": project,
@@ -1278,36 +1447,81 @@ async fn require_manage(
     Ok(role)
 }
 
-async fn find_element_for_page(state: &AppState, page_id: Uuid) -> Result<Element, ApiError> {
+async fn visible_element(
+    state: &AppState,
+    user: &User,
+    element_id: Uuid,
+) -> Result<Element, ApiError> {
+    let Some(el) = state.db.get_element(element_id).await? else {
+        return Err(ApiError::not_found("element"));
+    };
+    if state
+        .db
+        .project_access(user, el.project_id)
+        .await?
+        .is_none()
+    {
+        return Err(ApiError::not_found("element"));
+    }
+    Ok(el)
+}
+
+async fn visible_element_for_page(
+    state: &AppState,
+    user: &User,
+    page_id: Uuid,
+) -> Result<Element, ApiError> {
     use sqlx::Row;
     let r = sqlx::query("SELECT element_id FROM pages WHERE id = ?")
         .bind(page_id.to_string())
         .fetch_optional(state.db.pool())
-        .await?
-        .ok_or(ApiError::not_found("page"))?;
+        .await?;
+    let Some(r) = r else {
+        return Err(ApiError::not_found("page"));
+    };
     let eid = Uuid::parse_str(r.get::<String, _>("element_id").as_str()).unwrap();
-    state
+    let Some(el) = state.db.get_element(eid).await? else {
+        return Err(ApiError::not_found("page"));
+    };
+    if state
         .db
-        .get_element(eid)
+        .project_access(user, el.project_id)
         .await?
-        .ok_or(ApiError::not_found("element"))
+        .is_none()
+    {
+        return Err(ApiError::not_found("page"));
+    }
+    Ok(el)
 }
 
-async fn find_element_for_panel(state: &AppState, panel_id: Uuid) -> Result<Element, ApiError> {
+async fn visible_element_for_panel(
+    state: &AppState,
+    user: &User,
+    panel_id: Uuid,
+) -> Result<Element, ApiError> {
     use sqlx::Row;
     let r = sqlx::query(
         "SELECT p.element_id FROM panels pan JOIN pages p ON p.id = pan.page_id WHERE pan.id = ?",
     )
     .bind(panel_id.to_string())
     .fetch_optional(state.db.pool())
-    .await?
-    .ok_or(ApiError::not_found("panel"))?;
+    .await?;
+    let Some(r) = r else {
+        return Err(ApiError::not_found("panel"));
+    };
     let eid = Uuid::parse_str(r.get::<String, _>("element_id").as_str()).unwrap();
-    state
+    let Some(el) = state.db.get_element(eid).await? else {
+        return Err(ApiError::not_found("panel"));
+    };
+    if state
         .db
-        .get_element(eid)
+        .project_access(user, el.project_id)
         .await?
-        .ok_or(ApiError::not_found("element"))
+        .is_none()
+    {
+        return Err(ApiError::not_found("panel"));
+    }
+    Ok(el)
 }
 
 fn count_words(s: &str) -> usize {
@@ -1337,6 +1551,7 @@ fn content_type_for(format: ExportFormat) -> String {
 struct ApiError {
     status: StatusCode,
     message: String,
+    body: Option<serde_json::Value>,
 }
 
 impl ApiError {
@@ -1344,61 +1559,79 @@ impl ApiError {
         Self {
             status: StatusCode::BAD_REQUEST,
             message: msg.into(),
+            body: None,
         }
     }
     fn unauthorized(msg: &str) -> Self {
         Self {
             status: StatusCode::UNAUTHORIZED,
             message: msg.into(),
+            body: None,
         }
     }
     fn forbidden() -> Self {
         Self {
             status: StatusCode::FORBIDDEN,
             message: "forbidden".into(),
+            body: None,
         }
     }
     fn not_found(what: &str) -> Self {
         Self {
             status: StatusCode::NOT_FOUND,
             message: format!("{what} not found"),
+            body: None,
+        }
+    }
+    fn limited() -> Self {
+        Self {
+            status: StatusCode::TOO_MANY_REQUESTS,
+            message: "too many requests".into(),
+            body: None,
+        }
+    }
+    fn conflict(body: serde_json::Value) -> Self {
+        Self {
+            status: StatusCode::CONFLICT,
+            message: "edit conflict".into(),
+            body: Some(body),
+        }
+    }
+    fn internal() -> Self {
+        Self {
+            status: StatusCode::INTERNAL_SERVER_ERROR,
+            message: "internal error".into(),
+            body: None,
         }
     }
 }
 
 impl From<anyhow::Error> for ApiError {
     fn from(e: anyhow::Error) -> Self {
-        Self {
-            status: StatusCode::INTERNAL_SERVER_ERROR,
-            message: e.to_string(),
-        }
+        tracing::error!(error = %e, "request failed");
+        Self::internal()
     }
 }
 
 impl From<sqlx::Error> for ApiError {
     fn from(e: sqlx::Error) -> Self {
-        Self {
-            status: StatusCode::INTERNAL_SERVER_ERROR,
-            message: e.to_string(),
-        }
+        tracing::error!(error = %e, "database error");
+        Self::internal()
     }
 }
 
 impl From<std::io::Error> for ApiError {
     fn from(e: std::io::Error) -> Self {
-        Self {
-            status: StatusCode::INTERNAL_SERVER_ERROR,
-            message: e.to_string(),
-        }
+        tracing::error!(error = %e, "io error");
+        Self::internal()
     }
 }
 
 impl IntoResponse for ApiError {
     fn into_response(self) -> Response {
-        (
-            self.status,
-            Json(serde_json::json!({ "error": self.message })),
-        )
-            .into_response()
+        let body = self
+            .body
+            .unwrap_or_else(|| serde_json::json!({ "error": self.message }));
+        (self.status, Json(body)).into_response()
     }
 }

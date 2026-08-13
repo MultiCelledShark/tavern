@@ -1,7 +1,9 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { Link, useParams } from "react-router-dom";
+import { Link, useNavigate, useParams } from "react-router-dom";
 import {
   api,
+  canEditRole,
+  canManageRole,
   Element,
   ElementLink,
   MODULES,
@@ -56,6 +58,7 @@ export default function ProjectWorkspace({
   onLogout: () => Promise<void>;
 }) {
   const { projectId = "" } = useParams();
+  const navigate = useNavigate();
   const [project, setProject] = useState<Project | null>(null);
   const [module, setModule] = useState<ModuleType>("manuscript");
   const [elements, setElements] = useState<Element[]>([]);
@@ -66,6 +69,7 @@ export default function ProjectWorkspace({
   const [corkboard, setCorkboard] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [grantUser, setGrantUser] = useState("");
+  const [grantRole, setGrantRole] = useState<"editor" | "viewer">("editor");
   const [newTitle, setNewTitle] = useState("");
   const [chrome, setChrome] = useState<ChromeState>(() => loadChrome());
   const [compact, setCompact] = useState(
@@ -232,6 +236,9 @@ export default function ProjectWorkspace({
     URL.revokeObjectURL(url);
   }
 
+  const canEdit = canEditRole(project?.my_role);
+  const canManage = canManageRole(project?.my_role);
+
   const createLabel =
     module === "timeline" ? "Event" : module === "maps" ? "Map" : "Title";
 
@@ -296,40 +303,44 @@ export default function ProjectWorkspace({
         </div>
 
         <div className="topbar-tools">
-          <button
-            type="button"
-            data-tip={TIPS.exportMd}
-            onClick={async () => {
-              const blob = await api.exportProject(projectId, "markdown", "manuscript");
-              await download(blob, `${project?.title || "project"}-manuscript.md`);
-            }}
-          >
-            Export MD
-          </button>
-          <button
-            type="button"
-            data-tip={TIPS.exportDocx}
-            onClick={async () => {
-              try {
-                const blob = await api.exportProject(projectId, "docx", "manuscript");
-                await download(blob, `${project?.title || "project"}.docx`);
-              } catch {
-                setError("DOCX export needs pandoc on the server");
-              }
-            }}
-          >
-            Export DOCX
-          </button>
-          <button
-            type="button"
-            data-tip={TIPS.backup}
-            onClick={async () => {
-              const blob = await api.backupProject(projectId);
-              await download(blob, `${project?.title || "project"}.tavern`);
-            }}
-          >
-            Backup
-          </button>
+          {canEdit && (
+            <>
+              <button
+                type="button"
+                data-tip={TIPS.exportMd}
+                onClick={async () => {
+                  const blob = await api.exportProject(projectId, "markdown", "manuscript");
+                  await download(blob, `${project?.title || "project"}-manuscript.md`);
+                }}
+              >
+                Export MD
+              </button>
+              <button
+                type="button"
+                data-tip={TIPS.exportDocx}
+                onClick={async () => {
+                  try {
+                    const blob = await api.exportProject(projectId, "docx", "manuscript");
+                    await download(blob, `${project?.title || "project"}.docx`);
+                  } catch {
+                    setError("DOCX export needs pandoc on the server");
+                  }
+                }}
+              >
+                Export DOCX
+              </button>
+              <button
+                type="button"
+                data-tip={TIPS.backup}
+                onClick={async () => {
+                  const blob = await api.backupProject(projectId);
+                  await download(blob, `${project?.title || "project"}.tavern`);
+                }}
+              >
+                Backup
+              </button>
+            </>
+          )}
           <span className="muted topbar-user" style={{ color: "#c5cec8" }}>
             {user.username}
           </span>
@@ -397,17 +408,19 @@ export default function ProjectWorkspace({
             Hide
           </button>
         </div>
-        <header>
-          <input
-            placeholder={createLabel}
-            value={newTitle}
-            onChange={(e) => setNewTitle(e.target.value)}
-            data-tip={TIPS.newElement}
-          />
-          <button className="primary" type="button" data-tip={TIPS.newElement} onClick={createElement}>
-            +
-          </button>
-        </header>
+        {canEdit && (
+          <header>
+            <input
+              placeholder={createLabel}
+              value={newTitle}
+              onChange={(e) => setNewTitle(e.target.value)}
+              data-tip={TIPS.newElement}
+            />
+            <button className="primary" type="button" data-tip={TIPS.newElement} onClick={createElement}>
+              +
+            </button>
+          </header>
+        )}
         {module === "manuscript" && (
           <div className="row" style={{ padding: "0.5rem 0.75rem" }}>
             <button
@@ -452,6 +465,7 @@ export default function ProjectWorkspace({
             projectId={projectId}
             elements={allElements.filter((e) => e.module_type === "character")}
             links={links}
+            canEdit={canEdit}
             onChange={async () => setLinks(await api.links(projectId))}
           />
         )}
@@ -461,7 +475,7 @@ export default function ProjectWorkspace({
             projectId={projectId}
             element={selected}
             locations={locations}
-            canEdit
+            canEdit={canEdit}
             onSaved={async () => {
               await refreshElements();
               setAllElements(await api.elements(projectId));
@@ -481,7 +495,7 @@ export default function ProjectWorkspace({
               setSelectedId(id);
               if (compact) setPanel("list", false);
             }}
-            canEdit
+            canEdit={canEdit}
             onChanged={async () => {
               await refreshElements();
               setAllElements(await api.elements(projectId));
@@ -496,6 +510,7 @@ export default function ProjectWorkspace({
           <ManuscriptEditor
             element={selected}
             allElements={allElements}
+            canEdit={canEdit}
             onRenamed={async (title) => {
               await api.updateElement(selected.id, {
                 title,
@@ -510,6 +525,7 @@ export default function ProjectWorkspace({
         {module === "manuscript" && corkboard && (
           <Corkboard
             elements={elements}
+            canEdit={canEdit}
             onOpen={(id) => {
               setSelectedId(id);
               setCorkboard(false);
@@ -529,7 +545,7 @@ export default function ProjectWorkspace({
             <PanelCanvas
               projectId={projectId}
               element={selected}
-              canEdit
+              canEdit={canEdit}
               onTitle={async (title) => {
                 await api.updateElement(selected.id, {
                   title,
@@ -569,19 +585,21 @@ export default function ProjectWorkspace({
               <strong>{selected.title}</strong>
               <div className="muted">{selected.module_type}</div>
             </div>
-            <button
-              type="button"
-              className="danger"
-              data-tip={TIPS.deleteElement}
-              onClick={async () => {
-                if (!confirm("Delete this element?")) return;
-                await api.deleteElement(selected.id);
-                await refreshElements();
-                setAllElements(await api.elements(projectId));
-              }}
-            >
-              Delete
-            </button>
+            {canEdit && (
+              <button
+                type="button"
+                className="danger"
+                data-tip={TIPS.deleteElement}
+                onClick={async () => {
+                  if (!confirm("Delete this element?")) return;
+                  await api.deleteElement(selected.id);
+                  await refreshElements();
+                  setAllElements(await api.elements(projectId));
+                }}
+              >
+                Delete
+              </button>
+            )}
           </div>
         )}
         <hr />
@@ -590,55 +608,106 @@ export default function ProjectWorkspace({
           Link with <code>[[Character:Name]]</code> in manuscript text.
         </p>
         <h4>Sharing</h4>
+        <p className="muted" style={{ fontSize: "0.85rem" }}>
+          Your access: {project?.my_role || "…"}
+        </p>
         <ul style={{ paddingLeft: "1.1rem" }}>
           {grants.map((g) => (
             <li key={g.user_id}>
               {g.username || g.user_id} · {g.role}{" "}
-              <button
-                type="button"
-                className="ghost"
-                style={{ padding: "0.1rem 0.35rem" }}
-                data-tip="Revoke this user's project access"
-                onClick={async () => {
-                  await api.deleteGrant(projectId, g.user_id);
-                  setGrants(await api.grants(projectId));
-                }}
-              >
-                ×
-              </button>
+              {canManage && g.user_id !== user.id && (
+                <button
+                  type="button"
+                  className="ghost"
+                  style={{ padding: "0.1rem 0.35rem" }}
+                  data-tip="Revoke this user's project access"
+                  onClick={async () => {
+                    await api.deleteGrant(projectId, g.user_id);
+                    setGrants(await api.grants(projectId));
+                  }}
+                >
+                  ×
+                </button>
+              )}
             </li>
           ))}
         </ul>
-        <div className="stack">
-          <input
-            placeholder="Username to grant"
-            value={grantUser}
-            onChange={(e) => setGrantUser(e.target.value)}
-            data-tip={TIPS.grant}
-          />
+        {canManage && (
+          <div className="stack">
+            <input
+              placeholder="Username to grant"
+              value={grantUser}
+              onChange={(e) => setGrantUser(e.target.value)}
+              data-tip={TIPS.grant}
+            />
+            <select
+              value={grantRole}
+              onChange={(e) => setGrantRole(e.target.value as "editor" | "viewer")}
+              data-tip={TIPS.grantRole}
+            >
+              <option value="editor">Editor</option>
+              <option value="viewer">Viewer</option>
+            </select>
+            <button
+              type="button"
+              data-tip={TIPS.grant}
+              onClick={async () => {
+                await api.upsertGrant(projectId, { username: grantUser.trim(), role: grantRole });
+                setGrantUser("");
+                setGrants(await api.grants(projectId));
+              }}
+            >
+              Grant access
+            </button>
+            <p className="muted" style={{ fontSize: "0.8rem" }}>
+              If that account exists, they now have access. No confirmation either way.
+            </p>
+            <button
+              type="button"
+              data-tip={TIPS.inviteLink}
+              onClick={async () => {
+                const res = await api.createInvite(projectId, grantRole);
+                const url = `${window.location.origin}/invite/${res.token}`;
+                try {
+                  await navigator.clipboard.writeText(url);
+                } catch {
+                  /* ignore */
+                }
+                window.prompt("Invite link (7 days, single use)", url);
+              }}
+            >
+              Copy invite link
+            </button>
+          </div>
+        )}
+        {!canManage && project && (
           <button
             type="button"
-            data-tip={TIPS.grant}
+            data-tip={TIPS.leaveProject}
             onClick={async () => {
-              await api.upsertGrant(projectId, { username: grantUser, role: "editor" });
-              setGrantUser("");
-              setGrants(await api.grants(projectId));
+              if (!confirm("Leave this project? You will lose access until invited again.")) return;
+              await api.deleteGrant(projectId, user.id);
+              navigate("/");
             }}
           >
-            Grant editor
+            Leave project
           </button>
-        </div>
-        <h4 style={{ marginTop: "1rem" }}>Export bible</h4>
-        <button
-          type="button"
-          data-tip={TIPS.bible}
-          onClick={async () => {
-            const blob = await api.exportProject(projectId, "markdown", "bible");
-            await download(blob, `${project?.title || "project"}-bible.md`);
-          }}
-        >
-          World bible MD
-        </button>
+        )}
+        {canEdit && (
+          <>
+            <h4 style={{ marginTop: "1rem" }}>Export bible</h4>
+            <button
+              type="button"
+              data-tip={TIPS.bible}
+              onClick={async () => {
+                const blob = await api.exportProject(projectId, "markdown", "bible");
+                await download(blob, `${project?.title || "project"}-bible.md`);
+              }}
+            >
+              World bible MD
+            </button>
+          </>
+        )}
       </aside>
     </div>
   );
