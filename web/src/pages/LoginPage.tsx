@@ -1,7 +1,7 @@
 import { FormEvent, useEffect, useState } from "react";
 import { api, User } from "../api/client";
 import RecoveryKey from "../components/RecoveryKey";
-import { createVault, parseEnvelope } from "../crypto/vault";
+import { createVault, parseEnvelope, vaultCryptoAvailable } from "../crypto/vault";
 import { setVault, unlockEnvelope } from "../crypto/session";
 import { Link } from "../lib/router";
 import { TIPS } from "../tips";
@@ -14,6 +14,7 @@ export default function LoginPage({ onLogin }: { onLogin: (u: User) => void }) {
   const [signup, setSignup] = useState(false);
   const [recoveryKey, setRecoveryKey] = useState<string | null>(null);
   const [pendingUser, setPendingUser] = useState<User | null>(null);
+  const cryptoOk = vaultCryptoAvailable();
 
   useEffect(() => {
     api.authConfig().then((c) => setSignup(c.signup)).catch(() => setSignup(false));
@@ -70,6 +71,13 @@ export default function LoginPage({ onLogin }: { onLogin: (u: User) => void }) {
         </div>
         <h1>Pull up a chair</h1>
         <p>Self-hosted writing & worldbuilding — your stories, your fire.</p>
+        {!cryptoOk && (
+          <div className="error">
+            Vault crypto needs a secure browser context. Open Tavern via{" "}
+            <code>http://127.0.0.1</code> on this machine, or serve it over HTTPS — plain HTTP to a
+            LAN IP cannot create or unlock a vault.
+          </div>
+        )}
         <form onSubmit={submit}>
           <label data-tip={TIPS.loginUser}>
             Username
@@ -78,6 +86,7 @@ export default function LoginPage({ onLogin }: { onLogin: (u: User) => void }) {
               onChange={(e) => setUsername(e.target.value)}
               autoComplete="username"
               required
+              disabled={!cryptoOk}
             />
           </label>
           <label data-tip={TIPS.loginPass}>
@@ -88,10 +97,15 @@ export default function LoginPage({ onLogin }: { onLogin: (u: User) => void }) {
               onChange={(e) => setPassword(e.target.value)}
               autoComplete="current-password"
               required
+              disabled={!cryptoOk}
             />
           </label>
           {error && <div className="error">{error}</div>}
-          <button className="primary" disabled={busy} data-tip="Sign in to your writing workspace">
+          <button
+            className="primary"
+            disabled={busy || !cryptoOk}
+            data-tip="Sign in to your writing workspace"
+          >
             {busy ? "Entering…" : "Enter"}
           </button>
         </form>
