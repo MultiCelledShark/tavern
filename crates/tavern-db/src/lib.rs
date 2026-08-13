@@ -5,10 +5,8 @@ use chrono::{Duration, Utc};
 use rand::rngs::OsRng;
 use rand::RngCore;
 use sha2::{Digest, Sha256};
-use sqlx::sqlite::{SqliteConnectOptions, SqliteJournalMode, SqlitePoolOptions, SqliteSynchronous};
-use sqlx::{Row, SqlitePool};
-use std::path::Path;
-use std::str::FromStr;
+use sqlx::postgres::{PgPool, PgPoolOptions, PgRow};
+use sqlx::Row;
 use std::time::Duration as StdDuration;
 use tavern_core::{
     default_panel_layout_for, default_template_pages, default_theme, Element, ElementLink, GrantRole,
@@ -18,31 +16,24 @@ use tavern_core::{
 use uuid::Uuid;
 
 pub struct Db {
-    pool: SqlitePool,
+    pool: PgPool,
 }
 
 impl Db {
-    pub async fn connect(db_path: &Path) -> Result<Self> {
-        if let Some(parent) = db_path.parent() {
-            std::fs::create_dir_all(parent)?;
-        }
-        let url = format!("sqlite://{}?mode=rwc", db_path.display());
-        let options = SqliteConnectOptions::from_str(&url)?
-            .create_if_missing(true)
-            .foreign_keys(true)
-            .journal_mode(SqliteJournalMode::Wal)
-            .synchronous(SqliteSynchronous::Normal)
-            .busy_timeout(StdDuration::from_secs(8));
-        let pool = SqlitePoolOptions::new()
-            .max_connections(16)
-            .connect_with(options)
+    pub async fn connect(database_url: &str) -> Result<Self> {
+        let pool = PgPoolOptions::new()
+            .max_connections(32)
+            .min_connections(4)
+            .acquire_timeout(StdDuration::from_secs(8))
+            .idle_timeout(StdDuration::from_secs(600))
+            .connect(database_url)
             .await?;
         let db = Self { pool };
         db.migrate().await?;
         Ok(db)
     }
 
-    pub fn pool(&self) -> &SqlitePool {
+    pub fn pool(&self) -> &PgPool {
         &self.pool
     }
 
@@ -50,40 +41,7 @@ impl Db {
         sqlx::raw_sql(include_str!("migrations/001_init.sql"))
             .execute(&self.pool)
             .await?;
-        sqlx::raw_sql(include_str!("migrations/002_hardening.sql"))
-            .execute(&self.pool)
-            .await?;
-        sqlx::raw_sql(include_str!("migrations/003_signup.sql"))
-            .execute(&self.pool)
-            .await?;
-        if !self.column_exists("users", "email").await? {
-            sqlx::query("ALTER TABLE users ADD COLUMN email TEXT")
-                .execute(&self.pool)
-                .await?;
-        }
-        if !self.column_exists("users", "email_verified").await? {
-            sqlx::query(
-                "ALTER TABLE users ADD COLUMN email_verified INTEGER NOT NULL DEFAULT 1",
-            )
-            .execute(&self.pool)
-            .await?;
-        }
-        sqlx::query(
-            "CREATE UNIQUE INDEX IF NOT EXISTS idx_users_email ON users(email) WHERE email IS NOT NULL",
-        )
-        .execute(&self.pool)
-        .await?;
         Ok(())
-    }
-
-    async fn column_exists(&self, table: &str, column: &str) -> Result<bool> {
-        let rows = sqlx::query("SELECT name FROM pragma_table_info(?)")
-            .bind(table)
-            .fetch_all(&self.pool)
-            .await?;
-        Ok(rows
-            .iter()
-            .any(|r| r.get::<String, _>("name") == column))
     }
 
     pub const MIN_PASSWORD_LEN: usize = 12;
@@ -147,7 +105,7 @@ impl Db {
 
     pub async fn set_password(&self, user_id: Uuid, password: &str) -> Result<()> {
         let hash = Self::hash_password(password)?;
-        let r = sqlx::query("UPDATE users SET password_hash = ? WHERE id = ?")
+        let r = sqlx::query("UPDATE users SET password_hash = $1 WHERE id = $2")
             .bind(&hash)
             .bind(user_id.to_string())
             .execute(&self.pool)
@@ -171,7 +129,7 @@ impl Db {
         let hash = Self::hash_password(password)?;
         sqlx::query(
             "INSERT INTO users (id, username, password_hash, is_admin, created_at, email, email_verified)
-             VALUES (?, ?, ?, ?, ?, ?, ?)",
+             VALUES ($1, $2, $3, $4, $5, $6, $7)",
         )
         .bind(id.to_string())
         .bind(username)
@@ -188,7 +146,7 @@ impl Db {
     }
 
     pub async fn set_email(&self, user_id: Uuid, email: Option<&str>, verified: bool) -> Result<()> {
-        sqlx::query("UPDATE users SET email = ?, email_verified = ? WHERE id = ?")
+        sqlx::query("UPDATE users SET email = $1, email_verified = $2 WHERE id = $3")
             .bind(email)
             .bind(verified as i64)
             .bind(user_id.to_string())
@@ -198,7 +156,7 @@ impl Db {
     }
 
     pub async fn set_email_verified(&self, user_id: Uuid, verified: bool) -> Result<()> {
-        sqlx::query("UPDATE users SET email_verified = ? WHERE id = ?")
+        sqlx::query("UPDATE users SET email_verified = $1 WHERE id = $2")
             .bind(verified as i64)
             .bind(user_id.to_string())
             .execute(&self.pool)
@@ -208,7 +166,7 @@ impl Db {
 
     pub async fn get_user(&self, id: Uuid) -> Result<Option<User>> {
         let row = sqlx::query(
-            "SELECT id, username, is_admin, created_at, email, email_verified FROM users WHERE id = ?",
+            "SELECT id, username, is_admin, created_at, email, email_verified FROM users WHERE id = $1",
         )
         .bind(id.to_string())
         .fetch_optional(&self.pool)
@@ -218,7 +176,7 @@ impl Db {
 
     pub async fn get_user_by_username(&self, username: &str) -> Result<Option<User>> {
         let row = sqlx::query(
-            "SELECT id, username, is_admin, created_at, email, email_verified FROM users WHERE username = ?",
+            "SELECT id, username, is_admin, created_at, email, email_verified FROM users WHERE username = $1",
         )
         .bind(username)
         .fetch_optional(&self.pool)
@@ -228,7 +186,7 @@ impl Db {
 
     pub async fn get_user_by_email(&self, email: &str) -> Result<Option<User>> {
         let row = sqlx::query(
-            "SELECT id, username, is_admin, created_at, email, email_verified FROM users WHERE email = ?",
+            "SELECT id, username, is_admin, created_at, email, email_verified FROM users WHERE email = $1",
         )
         .bind(email)
         .fetch_optional(&self.pool)
@@ -237,7 +195,7 @@ impl Db {
     }
 
     pub async fn get_password_hash(&self, username: &str) -> Result<Option<String>> {
-        let row = sqlx::query("SELECT password_hash FROM users WHERE username = ?")
+        let row = sqlx::query("SELECT password_hash FROM users WHERE username = $1")
             .bind(username)
             .fetch_optional(&self.pool)
             .await?;
@@ -253,7 +211,7 @@ impl Db {
         Ok(rows.into_iter().map(map_user).collect())
     }
 
-    fn hash_secret(token: &str) -> String {
+    pub fn hash_secret(token: &str) -> String {
         hex::encode(Sha256::digest(token.as_bytes()))
     }
 
@@ -265,7 +223,7 @@ impl Db {
         let now = Utc::now();
         let expires = now + Duration::days(30);
         sqlx::query(
-            "INSERT INTO sessions (token, user_id, expires_at, created_at) VALUES (?, ?, ?, ?)",
+            "INSERT INTO sessions (token, user_id, expires_at, created_at) VALUES ($1, $2, $3, $4)",
         )
         .bind(&token_hash)
         .bind(user_id.to_string())
@@ -280,7 +238,7 @@ impl Db {
         let token_hash = Self::hash_secret(token);
         let row = sqlx::query(
             "SELECT u.id, u.username, u.is_admin, u.created_at, u.email, u.email_verified, s.expires_at
-             FROM sessions s JOIN users u ON u.id = s.user_id WHERE s.token = ?",
+             FROM sessions s JOIN users u ON u.id = s.user_id WHERE s.token = $1",
         )
         .bind(&token_hash)
         .fetch_optional(&self.pool)
@@ -290,7 +248,7 @@ impl Db {
         };
         let expires = parse_dt(r.get::<String, _>("expires_at"));
         if expires < Utc::now() {
-            let _ = sqlx::query("DELETE FROM sessions WHERE token = ?")
+            let _ = sqlx::query("DELETE FROM sessions WHERE token = $1")
                 .bind(&token_hash)
                 .execute(&self.pool)
                 .await;
@@ -300,7 +258,7 @@ impl Db {
     }
 
     pub async fn delete_sessions_for_user(&self, user_id: Uuid) -> Result<()> {
-        sqlx::query("DELETE FROM sessions WHERE user_id = ?")
+        sqlx::query("DELETE FROM sessions WHERE user_id = $1")
             .bind(user_id.to_string())
             .execute(&self.pool)
             .await?;
@@ -313,7 +271,7 @@ impl Db {
         purpose: &str,
         ttl: Duration,
     ) -> Result<String> {
-        sqlx::query("DELETE FROM email_tokens WHERE user_id = ? AND purpose = ?")
+        sqlx::query("DELETE FROM email_tokens WHERE user_id = $1 AND purpose = $2")
             .bind(user_id.to_string())
             .bind(purpose)
             .execute(&self.pool)
@@ -325,7 +283,7 @@ impl Db {
         let expires = now + ttl;
         sqlx::query(
             "INSERT INTO email_tokens (token_hash, user_id, purpose, expires_at, created_at)
-             VALUES (?, ?, ?, ?, ?)",
+             VALUES ($1, $2, $3, $4, $5)",
         )
         .bind(Self::hash_secret(&token))
         .bind(user_id.to_string())
@@ -339,7 +297,7 @@ impl Db {
 
     pub async fn consume_email_token(&self, token: &str, purpose: &str) -> Result<Option<Uuid>> {
         let row = sqlx::query(
-            "SELECT user_id, expires_at FROM email_tokens WHERE token_hash = ? AND purpose = ?",
+            "SELECT user_id, expires_at FROM email_tokens WHERE token_hash = $1 AND purpose = $2",
         )
         .bind(Self::hash_secret(token))
         .bind(purpose)
@@ -350,7 +308,7 @@ impl Db {
         };
         let expires = parse_dt(r.get::<String, _>("expires_at"));
         let user_id = Uuid::parse_str(r.get::<String, _>("user_id").as_str()).unwrap();
-        sqlx::query("DELETE FROM email_tokens WHERE token_hash = ?")
+        sqlx::query("DELETE FROM email_tokens WHERE token_hash = $1")
             .bind(Self::hash_secret(token))
             .execute(&self.pool)
             .await?;
@@ -362,7 +320,7 @@ impl Db {
 
     pub async fn delete_session(&self, token: &str) -> Result<()> {
         let token_hash = Self::hash_secret(token);
-        sqlx::query("DELETE FROM sessions WHERE token = ?")
+        sqlx::query("DELETE FROM sessions WHERE token = $1")
             .bind(&token_hash)
             .execute(&self.pool)
             .await?;
@@ -370,7 +328,7 @@ impl Db {
     }
 
     pub async fn purge_expired_sessions(&self) -> Result<()> {
-        sqlx::query("DELETE FROM sessions WHERE expires_at < ?")
+        sqlx::query("DELETE FROM sessions WHERE expires_at < $1")
             .bind(Utc::now().to_rfc3339())
             .execute(&self.pool)
             .await?;
@@ -383,7 +341,7 @@ impl Db {
         project_id: Uuid,
     ) -> Result<Option<GrantRole>> {
         let row = sqlx::query(
-            "SELECT owner_id FROM projects WHERE id = ?",
+            "SELECT owner_id FROM projects WHERE id = $1",
         )
         .bind(project_id.to_string())
         .fetch_optional(&self.pool)
@@ -396,7 +354,7 @@ impl Db {
             return Ok(Some(GrantRole::Owner));
         }
         let grant = sqlx::query(
-            "SELECT role FROM project_grants WHERE project_id = ? AND user_id = ?",
+            "SELECT role FROM project_grants WHERE project_id = $1 AND user_id = $2",
         )
         .bind(project_id.to_string())
         .bind(user.id.to_string())
@@ -416,7 +374,7 @@ impl Db {
         let theme = default_theme().to_string();
         sqlx::query(
             "INSERT INTO projects (id, title, synopsis, owner_id, theme_json, created_at, updated_at)
-             VALUES (?, ?, ?, ?, ?, ?, ?)",
+             VALUES ($1, $2, $3, $4, $5, $6, $7)",
         )
         .bind(id.to_string())
         .bind(title)
@@ -428,7 +386,7 @@ impl Db {
         .execute(&self.pool)
         .await?;
         sqlx::query(
-            "INSERT INTO project_grants (project_id, user_id, role) VALUES (?, ?, 'owner')",
+            "INSERT INTO project_grants (project_id, user_id, role) VALUES ($1, $2, 'owner')",
         )
         .bind(id.to_string())
         .bind(owner_id.to_string())
@@ -441,7 +399,7 @@ impl Db {
 
     pub async fn get_project(&self, id: Uuid) -> Result<Option<Project>> {
         let row = sqlx::query(
-            "SELECT id, title, synopsis, owner_id, theme_json, created_at, updated_at FROM projects WHERE id = ?",
+            "SELECT id, title, synopsis, owner_id, theme_json, created_at, updated_at FROM projects WHERE id = $1",
         )
         .bind(id.to_string())
         .fetch_optional(&self.pool)
@@ -453,10 +411,10 @@ impl Db {
         let uid = user.id.to_string();
         let rows = sqlx::query(
             "SELECT p.id, p.title, p.synopsis, p.owner_id, p.theme_json, p.created_at, p.updated_at,
-                    CASE WHEN p.owner_id = ? THEN 'owner' ELSE COALESCE(g.role, 'viewer') END AS my_role
+                    CASE WHEN p.owner_id = $1 THEN 'owner' ELSE COALESCE(g.role, 'viewer') END AS my_role
              FROM projects p
-             LEFT JOIN project_grants g ON g.project_id = p.id AND g.user_id = ?
-             WHERE p.owner_id = ? OR g.user_id IS NOT NULL
+             LEFT JOIN project_grants g ON g.project_id = p.id AND g.user_id = $2
+             WHERE p.owner_id = $3 OR g.user_id IS NOT NULL
              ORDER BY p.updated_at DESC",
         )
         .bind(&uid)
@@ -483,7 +441,7 @@ impl Db {
     ) -> Result<Project> {
         let now = Utc::now();
         sqlx::query(
-            "UPDATE projects SET title = ?, synopsis = ?, theme_json = ?, updated_at = ? WHERE id = ?",
+            "UPDATE projects SET title = $1, synopsis = $2, theme_json = $3, updated_at = $4 WHERE id = $5",
         )
         .bind(title)
         .bind(synopsis)
@@ -498,7 +456,7 @@ impl Db {
     }
 
     pub async fn delete_project(&self, id: Uuid) -> Result<()> {
-        sqlx::query("DELETE FROM projects WHERE id = ?")
+        sqlx::query("DELETE FROM projects WHERE id = $1")
             .bind(id.to_string())
             .execute(&self.pool)
             .await?;
@@ -509,7 +467,7 @@ impl Db {
         let rows = sqlx::query(
             "SELECT g.project_id, g.user_id, g.role, u.username
              FROM project_grants g JOIN users u ON u.id = g.user_id
-             WHERE g.project_id = ?",
+             WHERE g.project_id = $1",
         )
         .bind(project_id.to_string())
         .fetch_all(&self.pool)
@@ -532,7 +490,7 @@ impl Db {
         role: GrantRole,
     ) -> Result<()> {
         sqlx::query(
-            "INSERT INTO project_grants (project_id, user_id, role) VALUES (?, ?, ?)
+            "INSERT INTO project_grants (project_id, user_id, role) VALUES ($1, $2, $3)
              ON CONFLICT(project_id, user_id) DO UPDATE SET role = excluded.role",
         )
         .bind(project_id.to_string())
@@ -544,7 +502,7 @@ impl Db {
     }
 
     pub async fn delete_grant(&self, project_id: Uuid, user_id: Uuid) -> Result<()> {
-        sqlx::query("DELETE FROM project_grants WHERE project_id = ? AND user_id = ?")
+        sqlx::query("DELETE FROM project_grants WHERE project_id = $1 AND user_id = $2")
             .bind(project_id.to_string())
             .bind(user_id.to_string())
             .execute(&self.pool)
@@ -567,7 +525,7 @@ impl Db {
         let expires = now + Duration::days(7);
         sqlx::query(
             "INSERT INTO project_invites (id, token_hash, project_id, role, created_by, expires_at, created_at, used_at)
-             VALUES (?, ?, ?, ?, ?, ?, ?, NULL)",
+             VALUES ($1, $2, $3, $4, $5, $6, $7, NULL)",
         )
         .bind(id.to_string())
         .bind(&token_hash)
@@ -595,7 +553,7 @@ impl Db {
     pub async fn list_invites(&self, project_id: Uuid) -> Result<Vec<ProjectInvite>> {
         let rows = sqlx::query(
             "SELECT id, project_id, role, created_by, expires_at, created_at, used_at
-             FROM project_invites WHERE project_id = ? AND used_at IS NULL
+             FROM project_invites WHERE project_id = $1 AND used_at IS NULL
              ORDER BY created_at DESC",
         )
         .bind(project_id.to_string())
@@ -605,7 +563,7 @@ impl Db {
     }
 
     pub async fn delete_invite(&self, project_id: Uuid, invite_id: Uuid) -> Result<()> {
-        sqlx::query("DELETE FROM project_invites WHERE id = ? AND project_id = ? AND used_at IS NULL")
+        sqlx::query("DELETE FROM project_invites WHERE id = $1 AND project_id = $2 AND used_at IS NULL")
             .bind(invite_id.to_string())
             .bind(project_id.to_string())
             .execute(&self.pool)
@@ -616,7 +574,7 @@ impl Db {
     pub async fn accept_invite(&self, token: &str) -> Result<Option<(Uuid, GrantRole)>> {
         let token_hash = Self::hash_secret(token);
         let row = sqlx::query(
-            "SELECT id, project_id, role, expires_at, used_at FROM project_invites WHERE token_hash = ?",
+            "SELECT id, project_id, role, expires_at, used_at FROM project_invites WHERE token_hash = $1",
         )
         .bind(&token_hash)
         .fetch_optional(&self.pool)
@@ -634,7 +592,7 @@ impl Db {
         let invite_id: String = r.get("id");
         let project_id = Uuid::parse_str(r.get::<String, _>("project_id").as_str()).unwrap();
         let role = GrantRole::parse_shareable(&r.get::<String, _>("role")).unwrap_or(GrantRole::Viewer);
-        sqlx::query("UPDATE project_invites SET used_at = ? WHERE id = ?")
+        sqlx::query("UPDATE project_invites SET used_at = $1 WHERE id = $2")
             .bind(Utc::now().to_rfc3339())
             .bind(&invite_id)
             .execute(&self.pool)
@@ -656,7 +614,7 @@ impl Db {
         let sort = self.next_element_sort(project_id, module_type).await?;
         sqlx::query(
             "INSERT INTO elements (id, project_id, module_type, title, parent_id, sort_order, metadata, created_at, updated_at)
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)",
         )
         .bind(id.to_string())
         .bind(project_id.to_string())
@@ -672,7 +630,7 @@ impl Db {
 
         if module_type == ModuleType::Manuscript {
             sqlx::query(
-                "INSERT INTO manuscript_bodies (element_id, markdown, word_goal, updated_at) VALUES (?, '', 0, ?)",
+                "INSERT INTO manuscript_bodies (element_id, markdown, word_goal, updated_at) VALUES ($1, '', 0, $2)",
             )
             .bind(id.to_string())
             .bind(now.to_rfc3339())
@@ -691,7 +649,7 @@ impl Db {
 
     async fn next_element_sort(&self, project_id: Uuid, module_type: ModuleType) -> Result<i64> {
         let row = sqlx::query(
-            "SELECT COALESCE(MAX(sort_order), -1) + 1 AS n FROM elements WHERE project_id = ? AND module_type = ?",
+            "SELECT COALESCE(MAX(sort_order), -1) + 1 AS n FROM elements WHERE project_id = $1 AND module_type = $2",
         )
         .bind(project_id.to_string())
         .bind(module_type.as_str())
@@ -745,7 +703,7 @@ impl Db {
     pub async fn get_element(&self, id: Uuid) -> Result<Option<Element>> {
         let row = sqlx::query(
             "SELECT id, project_id, module_type, title, parent_id, sort_order, metadata, created_at, updated_at
-             FROM elements WHERE id = ?",
+             FROM elements WHERE id = $1",
         )
         .bind(id.to_string())
         .fetch_optional(&self.pool)
@@ -761,7 +719,7 @@ impl Db {
         let rows = if let Some(m) = module_type {
             sqlx::query(
                 "SELECT id, project_id, module_type, title, parent_id, sort_order, metadata, created_at, updated_at
-                 FROM elements WHERE project_id = ? AND module_type = ?
+                 FROM elements WHERE project_id = $1 AND module_type = $2
                  ORDER BY sort_order, title",
             )
             .bind(project_id.to_string())
@@ -771,7 +729,7 @@ impl Db {
         } else {
             sqlx::query(
                 "SELECT id, project_id, module_type, title, parent_id, sort_order, metadata, created_at, updated_at
-                 FROM elements WHERE project_id = ?
+                 FROM elements WHERE project_id = $1
                  ORDER BY module_type, sort_order, title",
             )
             .bind(project_id.to_string())
@@ -795,7 +753,7 @@ impl Db {
             .await?
             .ok_or_else(|| anyhow!("element not found"))?;
         sqlx::query(
-            "UPDATE elements SET title = ?, parent_id = ?, sort_order = ?, metadata = ?, updated_at = ? WHERE id = ?",
+            "UPDATE elements SET title = $1, parent_id = $2, sort_order = $3, metadata = $4, updated_at = $5 WHERE id = $6",
         )
         .bind(title)
         .bind(parent_id.map(|p| p.to_string()))
@@ -813,7 +771,7 @@ impl Db {
 
     pub async fn delete_element(&self, id: Uuid) -> Result<()> {
         if let Some(el) = self.get_element(id).await? {
-            sqlx::query("DELETE FROM elements WHERE id = ?")
+            sqlx::query("DELETE FROM elements WHERE id = $1")
                 .bind(id.to_string())
                 .execute(&self.pool)
                 .await?;
@@ -831,7 +789,7 @@ impl Db {
     ) -> Result<Page> {
         let id = Uuid::new_v4();
         sqlx::query(
-            "INSERT INTO pages (id, element_id, title, sort_order, description) VALUES (?, ?, ?, ?, ?)",
+            "INSERT INTO pages (id, element_id, title, sort_order, description) VALUES ($1, $2, $3, $4, $5)",
         )
         .bind(id.to_string())
         .bind(element_id.to_string())
@@ -851,7 +809,7 @@ impl Db {
 
     pub async fn list_pages(&self, element_id: Uuid) -> Result<Vec<Page>> {
         let rows = sqlx::query(
-            "SELECT id, element_id, title, sort_order, description FROM pages WHERE element_id = ? ORDER BY sort_order",
+            "SELECT id, element_id, title, sort_order, description FROM pages WHERE element_id = $1 ORDER BY sort_order",
         )
         .bind(element_id.to_string())
         .fetch_all(&self.pool)
@@ -876,7 +834,7 @@ impl Db {
         sort_order: i64,
     ) -> Result<Page> {
         sqlx::query(
-            "UPDATE pages SET title = ?, description = ?, sort_order = ? WHERE id = ?",
+            "UPDATE pages SET title = $1, description = $2, sort_order = $3 WHERE id = $4",
         )
         .bind(title)
         .bind(description)
@@ -885,7 +843,7 @@ impl Db {
         .execute(&self.pool)
         .await?;
         let row = sqlx::query(
-            "SELECT id, element_id, title, sort_order, description FROM pages WHERE id = ?",
+            "SELECT id, element_id, title, sort_order, description FROM pages WHERE id = $1",
         )
         .bind(id.to_string())
         .fetch_one(&self.pool)
@@ -900,7 +858,7 @@ impl Db {
     }
 
     pub async fn delete_page(&self, id: Uuid) -> Result<()> {
-        sqlx::query("DELETE FROM pages WHERE id = ?")
+        sqlx::query("DELETE FROM pages WHERE id = $1")
             .bind(id.to_string())
             .execute(&self.pool)
             .await?;
@@ -920,7 +878,7 @@ impl Db {
         let id = Uuid::new_v4();
         sqlx::query(
             "INSERT INTO panels (id, page_id, panel_type, title, border_color, layout_json, content_json, sort_order)
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8)",
         )
         .bind(id.to_string())
         .bind(page_id.to_string())
@@ -947,7 +905,7 @@ impl Db {
     pub async fn list_panels(&self, page_id: Uuid) -> Result<Vec<Panel>> {
         let rows = sqlx::query(
             "SELECT id, page_id, panel_type, title, border_color, layout_json, content_json, sort_order
-             FROM panels WHERE page_id = ? ORDER BY sort_order",
+             FROM panels WHERE page_id = $1 ORDER BY sort_order",
         )
         .bind(page_id.to_string())
         .fetch_all(&self.pool)
@@ -965,7 +923,7 @@ impl Db {
         sort_order: i64,
     ) -> Result<Panel> {
         sqlx::query(
-            "UPDATE panels SET title = ?, border_color = ?, layout_json = ?, content_json = ?, sort_order = ? WHERE id = ?",
+            "UPDATE panels SET title = $1, border_color = $2, layout_json = $3, content_json = $4, sort_order = $5 WHERE id = $6",
         )
         .bind(title)
         .bind(border_color)
@@ -977,7 +935,7 @@ impl Db {
         .await?;
         let row = sqlx::query(
             "SELECT id, page_id, panel_type, title, border_color, layout_json, content_json, sort_order
-             FROM panels WHERE id = ?",
+             FROM panels WHERE id = $1",
         )
         .bind(id.to_string())
         .fetch_one(&self.pool)
@@ -986,7 +944,7 @@ impl Db {
     }
 
     pub async fn delete_panel(&self, id: Uuid) -> Result<()> {
-        sqlx::query("DELETE FROM panels WHERE id = ?")
+        sqlx::query("DELETE FROM panels WHERE id = $1")
             .bind(id.to_string())
             .execute(&self.pool)
             .await?;
@@ -1005,7 +963,7 @@ impl Db {
         let id = Uuid::new_v4();
         sqlx::query(
             "INSERT INTO element_links (id, project_id, from_element_id, to_element_id, label, link_type, metadata)
-             VALUES (?, ?, ?, ?, ?, ?, ?)",
+             VALUES ($1, $2, $3, $4, $5, $6, $7)",
         )
         .bind(id.to_string())
         .bind(project_id.to_string())
@@ -1030,7 +988,7 @@ impl Db {
     pub async fn list_links(&self, project_id: Uuid) -> Result<Vec<ElementLink>> {
         let rows = sqlx::query(
             "SELECT id, project_id, from_element_id, to_element_id, label, link_type, metadata
-             FROM element_links WHERE project_id = ?",
+             FROM element_links WHERE project_id = $1",
         )
         .bind(project_id.to_string())
         .fetch_all(&self.pool)
@@ -1041,7 +999,7 @@ impl Db {
     pub async fn get_link(&self, id: Uuid) -> Result<Option<ElementLink>> {
         let row = sqlx::query(
             "SELECT id, project_id, from_element_id, to_element_id, label, link_type, metadata
-             FROM element_links WHERE id = ?",
+             FROM element_links WHERE id = $1",
         )
         .bind(id.to_string())
         .fetch_optional(&self.pool)
@@ -1050,7 +1008,7 @@ impl Db {
     }
 
     pub async fn delete_link(&self, id: Uuid) -> Result<()> {
-        sqlx::query("DELETE FROM element_links WHERE id = ?")
+        sqlx::query("DELETE FROM element_links WHERE id = $1")
             .bind(id.to_string())
             .execute(&self.pool)
             .await?;
@@ -1067,7 +1025,7 @@ impl Db {
 
     pub async fn get_manuscript(&self, element_id: Uuid) -> Result<(String, i64, String)> {
         let row = sqlx::query(
-            "SELECT markdown, word_goal, updated_at FROM manuscript_bodies WHERE element_id = ?",
+            "SELECT markdown, word_goal, updated_at FROM manuscript_bodies WHERE element_id = $1",
         )
         .bind(element_id.to_string())
         .fetch_optional(&self.pool)
@@ -1099,7 +1057,7 @@ impl Db {
         let now = Utc::now().to_rfc3339();
         sqlx::query(
             "INSERT INTO manuscript_bodies (element_id, markdown, word_goal, updated_at)
-             VALUES (?, ?, ?, ?)
+             VALUES ($1, $2, $3, $4)
              ON CONFLICT(element_id) DO UPDATE SET markdown = excluded.markdown, word_goal = excluded.word_goal, updated_at = excluded.updated_at",
         )
         .bind(element_id.to_string())
@@ -1108,7 +1066,7 @@ impl Db {
         .bind(&now)
         .execute(&self.pool)
         .await?;
-        sqlx::query("UPDATE elements SET updated_at = ? WHERE id = ?")
+        sqlx::query("UPDATE elements SET updated_at = $1 WHERE id = $2")
             .bind(&now)
             .bind(element_id.to_string())
             .execute(&self.pool)
@@ -1129,7 +1087,7 @@ impl Db {
         let now = Utc::now();
         sqlx::query(
             "INSERT INTO templates (id, project_id, owner_id, module_type, name, description, pages_json, created_at)
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8)",
         )
         .bind(id.to_string())
         .bind(project_id.map(|p| p.to_string()))
@@ -1161,7 +1119,7 @@ impl Db {
         let rows = if let Some(m) = module_type {
             sqlx::query(
                 "SELECT id, project_id, owner_id, module_type, name, description, pages_json, created_at
-                 FROM templates WHERE owner_id = ? AND module_type = ? ORDER BY name",
+                 FROM templates WHERE owner_id = $1 AND module_type = $2 ORDER BY name",
             )
             .bind(owner_id.to_string())
             .bind(m.as_str())
@@ -1170,7 +1128,7 @@ impl Db {
         } else {
             sqlx::query(
                 "SELECT id, project_id, owner_id, module_type, name, description, pages_json, created_at
-                 FROM templates WHERE owner_id = ? ORDER BY module_type, name",
+                 FROM templates WHERE owner_id = $1 ORDER BY module_type, name",
             )
             .bind(owner_id.to_string())
             .fetch_all(&self.pool)
@@ -1180,7 +1138,7 @@ impl Db {
     }
 
     async fn touch_project(&self, project_id: Uuid) -> Result<()> {
-        sqlx::query("UPDATE projects SET updated_at = ? WHERE id = ?")
+        sqlx::query("UPDATE projects SET updated_at = $1 WHERE id = $2")
             .bind(Utc::now().to_rfc3339())
             .bind(project_id.to_string())
             .execute(&self.pool)
@@ -1189,7 +1147,7 @@ impl Db {
     }
 }
 
-fn map_user(r: sqlx::sqlite::SqliteRow) -> User {
+fn map_user(r: PgRow) -> User {
     User {
         id: Uuid::parse_str(r.get::<String, _>("id").as_str()).unwrap(),
         username: r.get("username"),
@@ -1208,7 +1166,7 @@ fn parse_dt(s: String) -> chrono::DateTime<Utc> {
         .unwrap_or_else(|_| Utc::now())
 }
 
-fn map_project(r: sqlx::sqlite::SqliteRow) -> Project {
+fn map_project(r: PgRow) -> Project {
     Project {
         id: Uuid::parse_str(r.get::<String, _>("id").as_str()).unwrap(),
         title: r.get("title"),
@@ -1221,7 +1179,7 @@ fn map_project(r: sqlx::sqlite::SqliteRow) -> Project {
     }
 }
 
-fn map_element(r: sqlx::sqlite::SqliteRow) -> Element {
+fn map_element(r: PgRow) -> Element {
     Element {
         id: Uuid::parse_str(r.get::<String, _>("id").as_str()).unwrap(),
         project_id: Uuid::parse_str(r.get::<String, _>("project_id").as_str()).unwrap(),
@@ -1239,7 +1197,7 @@ fn map_element(r: sqlx::sqlite::SqliteRow) -> Element {
     }
 }
 
-fn map_panel(r: sqlx::sqlite::SqliteRow) -> Panel {
+fn map_panel(r: PgRow) -> Panel {
     Panel {
         id: Uuid::parse_str(r.get::<String, _>("id").as_str()).unwrap(),
         page_id: Uuid::parse_str(r.get::<String, _>("page_id").as_str()).unwrap(),
@@ -1258,7 +1216,7 @@ fn map_panel(r: sqlx::sqlite::SqliteRow) -> Panel {
     }
 }
 
-fn map_link(r: sqlx::sqlite::SqliteRow) -> ElementLink {
+fn map_link(r: PgRow) -> ElementLink {
     ElementLink {
         id: Uuid::parse_str(r.get::<String, _>("id").as_str()).unwrap(),
         project_id: Uuid::parse_str(r.get::<String, _>("project_id").as_str()).unwrap(),
@@ -1271,7 +1229,7 @@ fn map_link(r: sqlx::sqlite::SqliteRow) -> ElementLink {
     }
 }
 
-fn map_template(r: sqlx::sqlite::SqliteRow) -> Template {
+fn map_template(r: PgRow) -> Template {
     Template {
         id: Uuid::parse_str(r.get::<String, _>("id").as_str()).unwrap(),
         project_id: r
@@ -1288,7 +1246,7 @@ fn map_template(r: sqlx::sqlite::SqliteRow) -> Template {
     }
 }
 
-fn map_invite(r: sqlx::sqlite::SqliteRow) -> ProjectInvite {
+fn map_invite(r: PgRow) -> ProjectInvite {
     ProjectInvite {
         id: Uuid::parse_str(r.get::<String, _>("id").as_str()).unwrap(),
         project_id: Uuid::parse_str(r.get::<String, _>("project_id").as_str()).unwrap(),

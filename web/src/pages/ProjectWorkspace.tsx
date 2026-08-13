@@ -61,7 +61,6 @@ export default function ProjectWorkspace({
   const navigate = useNavigate();
   const [project, setProject] = useState<Project | null>(null);
   const [module, setModule] = useState<ModuleType>("manuscript");
-  const [elements, setElements] = useState<Element[]>([]);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [links, setLinks] = useState<ElementLink[]>([]);
   const [allElements, setAllElements] = useState<Element[]>([]);
@@ -78,6 +77,11 @@ export default function ProjectWorkspace({
   const focusSnapshot = useRef<ChromeState | null>(null);
   const topbarRef = useRef<HTMLElement | null>(null);
   const shellRef = useRef<HTMLDivElement | null>(null);
+
+  const elements = useMemo(
+    () => allElements.filter((e) => e.module_type === module),
+    [allElements, module]
+  );
 
   const selected = useMemo(
     () => elements.find((e) => e.id === selectedId) || null,
@@ -178,21 +182,22 @@ export default function ProjectWorkspace({
   }, []);
 
   const refreshElements = useCallback(async () => {
-    const list = await api.elements(projectId, module);
-    setElements(list);
-    if (list.length && !list.find((e) => e.id === selectedId)) {
-      setSelectedId(list[0].id);
-    }
-    if (!list.length) setSelectedId(null);
-  }, [projectId, module, selectedId]);
+    setAllElements(await api.elements(projectId));
+  }, [projectId]);
 
   useEffect(() => {
     (async () => {
       try {
-        setProject(await api.getProject(projectId));
-        setLinks(await api.links(projectId));
-        setAllElements(await api.elements(projectId));
-        setGrants(await api.grants(projectId));
+        const [p, l, els, g] = await Promise.all([
+          api.getProject(projectId),
+          api.links(projectId),
+          api.elements(projectId),
+          api.grants(projectId),
+        ]);
+        setProject(p);
+        setLinks(l);
+        setAllElements(els);
+        setGrants(g);
       } catch (e) {
         setError(String(e));
       }
@@ -200,8 +205,14 @@ export default function ProjectWorkspace({
   }, [projectId]);
 
   useEffect(() => {
-    refreshElements().catch((e) => setError(String(e)));
-  }, [module, projectId]); // eslint-disable-line react-hooks/exhaustive-deps
+    if (!elements.length) {
+      setSelectedId(null);
+      return;
+    }
+    if (!selectedId || !elements.some((e) => e.id === selectedId)) {
+      setSelectedId(elements[0].id);
+    }
+  }, [elements, selectedId]);
 
   async function createElement() {
     const title =
@@ -221,9 +232,8 @@ export default function ProjectWorkspace({
       metadata,
     });
     setNewTitle("");
-    await refreshElements();
+    setAllElements((prev) => [...prev, el]);
     setSelectedId(el.id);
-    setAllElements(await api.elements(projectId));
     if (compact) setPanel("list", false);
   }
 
@@ -478,7 +488,6 @@ export default function ProjectWorkspace({
             canEdit={canEdit}
             onSaved={async () => {
               await refreshElements();
-              setAllElements(await api.elements(projectId));
             }}
           />
         )}
@@ -498,7 +507,6 @@ export default function ProjectWorkspace({
             canEdit={canEdit}
             onChanged={async () => {
               await refreshElements();
-              setAllElements(await api.elements(projectId));
             }}
           />
         )}
@@ -532,7 +540,6 @@ export default function ProjectWorkspace({
             }}
             onChanged={async () => {
               await refreshElements();
-              setAllElements(await api.elements(projectId));
             }}
           />
         )}
@@ -593,8 +600,7 @@ export default function ProjectWorkspace({
                 onClick={async () => {
                   if (!confirm("Delete this element?")) return;
                   await api.deleteElement(selected.id);
-                  await refreshElements();
-                  setAllElements(await api.elements(projectId));
+                  setAllElements((prev) => prev.filter((e) => e.id !== selected.id));
                 }}
               >
                 Delete

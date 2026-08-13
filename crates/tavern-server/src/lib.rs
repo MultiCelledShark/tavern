@@ -4,6 +4,7 @@ pub mod routes;
 pub mod state;
 mod rate_limit;
 mod security;
+mod session_cache;
 
 use anyhow::Result;
 use axum::extract::DefaultBodyLimit;
@@ -14,11 +15,12 @@ use state::AppState;
 use std::sync::Arc;
 use tavern_core::Config;
 use tavern_db::Db;
+use tower_http::compression::CompressionLayer;
 use tower_http::trace::TraceLayer;
 
 pub async fn build_state(config: Config) -> Result<Arc<AppState>> {
     config.ensure_dirs()?;
-    let db = Db::connect(&config.db_path()).await?;
+    let db = Db::connect(&config.database_url).await?;
     let force = std::env::var("TAVERN_ADMIN_PASS_FORCE")
         .map(|v| matches!(v.as_str(), "1" | "true" | "yes"))
         .unwrap_or(false);
@@ -47,6 +49,7 @@ pub async fn build_state(config: Config) -> Result<Arc<AppState>> {
         limiter: RateLimiter::new(),
         dummy_password_hash,
         mailer,
+        sessions: crate::session_cache::SessionCache::new(),
     }))
 }
 
@@ -55,6 +58,7 @@ pub fn app(state: Arc<AppState>) -> Router {
         .merge(routes::router())
         .layer(DefaultBodyLimit::max(32 * 1024 * 1024))
         .layer(middleware::from_fn(security::security_headers))
+        .layer(CompressionLayer::new())
         .layer(TraceLayer::new_for_http())
         .with_state(state)
 }

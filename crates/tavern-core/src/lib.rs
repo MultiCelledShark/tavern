@@ -7,6 +7,7 @@ use uuid::Uuid;
 pub struct Config {
     pub listen: String,
     pub data_dir: PathBuf,
+    pub database_url: String,
     pub admin_username: String,
     pub admin_password: String,
     pub cookie_secure: bool,
@@ -28,6 +29,7 @@ impl Default for Config {
         Self {
             listen: "0.0.0.0:8084".into(),
             data_dir: PathBuf::from("./data"),
+            database_url: "postgres://tavern:tavern@127.0.0.1:5432/tavern".into(),
             admin_username: "tavern_admin".into(),
             admin_password: "change-me-to-a-strong-password".into(),
             cookie_secure: false,
@@ -53,6 +55,9 @@ impl Config {
         }
         if let Ok(v) = std::env::var("TAVERN_DATA_DIR") {
             c.data_dir = PathBuf::from(v);
+        }
+        if let Ok(v) = std::env::var("TAVERN_DATABASE_URL") {
+            c.database_url = v;
         }
         if let Ok(v) = std::env::var("TAVERN_ADMIN_USER") {
             c.admin_username = v;
@@ -100,10 +105,6 @@ impl Config {
         std::fs::create_dir_all(self.data_dir.join("imports"))?;
         std::fs::create_dir_all(self.data_dir.join("exports"))?;
         Ok(())
-    }
-
-    pub fn db_path(&self) -> PathBuf {
-        self.data_dir.join("tavern.db")
     }
 
     pub fn project_assets_dir(&self, project_id: Uuid) -> PathBuf {

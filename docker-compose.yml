@@ -1,0 +1,36 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: tavern
+      POSTGRES_PASSWORD: tavern
+      POSTGRES_DB: tavern
+    ports:
+      - "5432:5432"
+    shm_size: "1g"
+    command:
+      - postgres
+      - -c
+      - shared_buffers=1GB
+      - -c
+      - effective_cache_size=8GB
+      - -c
+      - work_mem=16MB
+      - -c
+      - maintenance_work_mem=256MB
+      - -c
+      - max_connections=100
+      - -c
+      - random_page_cost=1.1
+      - -c
+      - checkpoint_completion_target=0.9
+    volumes:
+      - tavern-pg:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U tavern -d tavern"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+volumes:
+  tavern-pg:

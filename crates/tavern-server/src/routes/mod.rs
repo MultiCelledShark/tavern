@@ -188,6 +188,9 @@ async fn logout(
     jar: CookieJar,
 ) -> Result<(CookieJar, StatusCode), ApiError> {
     if let Some(c) = jar.get("tavern_session") {
+        state
+            .sessions
+            .remove(&tavern_db::Db::hash_secret(c.value()));
         let _ = state.db.delete_session(c.value()).await;
     }
     let mut cookie = Cookie::new("tavern_session", "");
@@ -390,6 +393,7 @@ async fn reset_password(
         return Err(ApiError::bad("invalid or expired link"));
     };
     state.db.set_password(user_id, &body.password).await?;
+    state.sessions.remove_user(user_id);
     state.db.delete_sessions_for_user(user_id).await?;
     Ok(StatusCode::NO_CONTENT)
 }
@@ -1603,12 +1607,18 @@ async fn list_modules() -> Json<serde_json::Value> {
 
 async fn index() -> Response {
     match Assets::get("index.html") {
-        Some(f) => Html(
-            std::str::from_utf8(f.data.as_ref())
-                .unwrap_or("<p>Tavern UI missing</p>")
-                .to_string(),
+        Some(f) => (
+            [(
+                header::CACHE_CONTROL,
+                "no-cache, no-store, must-revalidate",
+            )],
+            Html(
+                std::str::from_utf8(f.data.as_ref())
+                    .unwrap_or("<p>Tavern UI missing</p>")
+                    .to_string(),
+            ),
         )
-        .into_response(),
+            .into_response(),
         None => Html(
             r#"<!DOCTYPE html><html><head><meta charset="utf-8"><title>Tavern</title></head>
 <body style="font-family:system-ui;background:#e6e9e6;color:#1c2421;padding:2rem">
@@ -1635,7 +1645,17 @@ async fn static_asset(Path(path): Path<String>) -> Response {
             let mime = mime_guess::from_path(&key)
                 .first_or_octet_stream()
                 .to_string();
-            ([(header::CONTENT_TYPE, mime)], f.data.to_vec()).into_response()
+            (
+                [
+                    (header::CONTENT_TYPE, mime.as_str()),
+                    (
+                        header::CACHE_CONTROL,
+                        "public, max-age=31536000, immutable",
+                    ),
+                ],
+                f.data.to_vec(),
+            )
+                .into_response()
         }
         None => StatusCode::NOT_FOUND.into_response(),
     }
@@ -1702,7 +1722,7 @@ async fn visible_element_for_page(
     page_id: Uuid,
 ) -> Result<Element, ApiError> {
     use sqlx::Row;
-    let r = sqlx::query("SELECT element_id FROM pages WHERE id = ?")
+    let r = sqlx::query("SELECT element_id FROM pages WHERE id = $1")
         .bind(page_id.to_string())
         .fetch_optional(state.db.pool())
         .await?;
@@ -1731,7 +1751,7 @@ async fn visible_element_for_panel(
 ) -> Result<Element, ApiError> {
     use sqlx::Row;
     let r = sqlx::query(
-        "SELECT p.element_id FROM panels pan JOIN pages p ON p.id = pan.page_id WHERE pan.id = ?",
+        "SELECT p.element_id FROM panels pan JOIN pages p ON p.id = pan.page_id WHERE pan.id = $1",
     )
     .bind(panel_id.to_string())
     .fetch_optional(state.db.pool())

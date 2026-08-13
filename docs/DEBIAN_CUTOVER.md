@@ -17,7 +17,7 @@ Status: **planned only**. Update this doc whenever app behavior changes the depl
 |--------|--------|--------------|
 | Binary | `cargo run -p tavern-server` embeds `web/dist` via rust-embed | Release build on a machine with Node (or use prebuilt `web/dist` in tree), then copy `/usr/local/bin/tavern` |
 | Listen | `TAVERN_LISTEN` default `0.0.0.0:8084` | Prefer `127.0.0.1:8084` behind nginx |
-| Data | `TAVERN_DATA_DIR` → SQLite `tavern.db`, `projects/*/assets`, imports/exports | Migrate whole data dir; assets are required for maps/image panels |
+| Data | `TAVERN_DATABASE_URL` (Postgres) + `TAVERN_DATA_DIR` for `projects/*/assets`, imports/exports | Dump/restore Postgres separately from the assets tree |
 | Auth cookies | `TAVERN_COOKIE_SECURE`, `TAVERN_TRUST_PROXY` | Set both to `1` when HTTPS terminates at nginx |
 | Uploads | `POST /api/projects/{id}/assets` (images ≤ 12MB) | nginx `client_max_body_size` must be ≥ 12MB (recommend 16m) |
 | Export | pandoc optional for DOCX/EPUB/PDF | Install `pandoc` on the server if those formats matter |
@@ -49,23 +49,26 @@ Ship: `target/release/tavern` (or musl static build if preferred).
 
 1. Create system user `tavern`
 2. `mkdir -p /var/lib/tavern && chown tavern:tavern /var/lib/tavern`
-3. Install binary → `/usr/local/bin/tavern`
-4. `/etc/tavern.env` from `.env.example`:
+3. Install Postgres and create a `tavern` database/role
+4. Install binary → `/usr/local/bin/tavern`
+5. `/etc/tavern.env` from `.env.example`:
    - Strong `TAVERN_ADMIN_PASS`
    - `TAVERN_LISTEN=127.0.0.1:8084`
    - `TAVERN_DATA_DIR=/var/lib/tavern`
+   - `TAVERN_DATABASE_URL=postgres://tavern:...@127.0.0.1:5432/tavern`
    - `TAVERN_COOKIE_SECURE=1`
    - `TAVERN_TRUST_PROXY=1`
-5. Install unit from `deploy/debian/tavern.service`
-6. Optional: `apt install pandoc`
-7. `systemctl enable --now tavern` and hit `http://127.0.0.1:8084/api/health` on the host
+6. Install unit from `deploy/debian/tavern.service`
+7. Optional: `apt install pandoc`
+8. `systemctl enable --now tavern` and hit `http://127.0.0.1:8084/api/health` on the host
 
 ### 3. Data migration (if keeping projects)
 
 1. Stop writing on the old host (`systemctl stop` / stop tmux server)
-2. Copy `data/` (or current `TAVERN_DATA_DIR`) → `/var/lib/tavern` preserving ownership
-3. Confirm `tavern.db` + `projects/*/assets` present
-4. Start systemd unit; smoke-test login, an image panel, and a map background
+2. Copy `data/` (or current `TAVERN_DATA_DIR`) → `/var/lib/tavern` preserving ownership (assets)
+3. Restore Postgres (`pg_dump` / `pg_restore`) into the Debian database
+4. Confirm `projects/*/assets` present and `TAVERN_DATABASE_URL` points at the restored DB
+5. Start systemd unit; smoke-test login, an image panel, and a map background
 
 ### 4. nginx cutover
 
@@ -92,6 +95,5 @@ Add a line here if a PR changes deploy assumptions:
 
 ## Out of scope for this plan
 
-- Kubernetes / Docker packaging
-- Multi-instance SQLite (single writer only)
+- Kubernetes / multi-instance tavern (one app process is still the unit; Postgres is the catalog)
 - Putting real Albion hostnames in the public repo

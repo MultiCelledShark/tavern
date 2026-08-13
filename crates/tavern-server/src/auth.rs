@@ -30,12 +30,17 @@ impl FromRequestParts<Arc<AppState>> for AuthUser {
             })
             .ok_or(StatusCode::UNAUTHORIZED)?;
 
+        let token_hash = tavern_db::Db::hash_secret(&token);
+        if let Some(user) = state.sessions.get(&token_hash) {
+            return Ok(AuthUser(user));
+        }
         let user = state
             .db
             .user_for_session(&token)
             .await
             .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
             .ok_or(StatusCode::UNAUTHORIZED)?;
+        state.sessions.insert(token_hash, user.clone());
         Ok(AuthUser(user))
     }
 }

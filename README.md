@@ -22,6 +22,7 @@ Inspired by Campfire’s layout concepts; original code and UI. Not affiliated w
 cp .env.example .env
 # edit TAVERN_ADMIN_PASS (min 12 chars; not "admin")
 
+docker compose up -d postgres
 cd web && npm install && npm run build && cd ..
 cargo run -p tavern-server
 ```

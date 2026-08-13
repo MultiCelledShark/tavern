@@ -1,6 +1,7 @@
 [Unit]
 Description=Tavern writing server
-After=network.target
+After=network.target postgresql.service
+Wants=postgresql.service
 
 [Service]
 Type=simple

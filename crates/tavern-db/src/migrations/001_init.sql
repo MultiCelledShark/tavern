@@ -1,12 +1,12 @@
--- Tavern schema v1
-PRAGMA foreign_keys = ON;
-
+-- Postgres schema (current). CREATE IF NOT EXISTS so boot is idempotent.
 CREATE TABLE IF NOT EXISTS users (
     id TEXT PRIMARY KEY NOT NULL,
     username TEXT NOT NULL UNIQUE,
     password_hash TEXT NOT NULL,
-    is_admin INTEGER NOT NULL DEFAULT 0,
-    created_at TEXT NOT NULL
+    is_admin BIGINT NOT NULL DEFAULT 0,
+    created_at TEXT NOT NULL,
+    email TEXT,
+    email_verified BIGINT NOT NULL DEFAULT 1
 );
 
 CREATE TABLE IF NOT EXISTS sessions (
@@ -39,7 +39,7 @@ CREATE TABLE IF NOT EXISTS elements (
     module_type TEXT NOT NULL,
     title TEXT NOT NULL,
     parent_id TEXT REFERENCES elements(id) ON DELETE SET NULL,
-    sort_order INTEGER NOT NULL DEFAULT 0,
+    sort_order BIGINT NOT NULL DEFAULT 0,
     metadata TEXT NOT NULL DEFAULT '{}',
     created_at TEXT NOT NULL,
     updated_at TEXT NOT NULL
@@ -49,7 +49,7 @@ CREATE TABLE IF NOT EXISTS pages (
     id TEXT PRIMARY KEY NOT NULL,
     element_id TEXT NOT NULL REFERENCES elements(id) ON DELETE CASCADE,
     title TEXT NOT NULL DEFAULT 'Page',
-    sort_order INTEGER NOT NULL DEFAULT 0,
+    sort_order BIGINT NOT NULL DEFAULT 0,
     description TEXT NOT NULL DEFAULT ''
 );
 
@@ -61,7 +61,7 @@ CREATE TABLE IF NOT EXISTS panels (
     border_color TEXT,
     layout_json TEXT NOT NULL DEFAULT '{}',
     content_json TEXT NOT NULL DEFAULT '{}',
-    sort_order INTEGER NOT NULL DEFAULT 0
+    sort_order BIGINT NOT NULL DEFAULT 0
 );
 
 CREATE TABLE IF NOT EXISTS element_links (
@@ -88,8 +88,27 @@ CREATE TABLE IF NOT EXISTS templates (
 CREATE TABLE IF NOT EXISTS manuscript_bodies (
     element_id TEXT PRIMARY KEY NOT NULL REFERENCES elements(id) ON DELETE CASCADE,
     markdown TEXT NOT NULL DEFAULT '',
-    word_goal INTEGER NOT NULL DEFAULT 0,
+    word_goal BIGINT NOT NULL DEFAULT 0,
     updated_at TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS project_invites (
+    id TEXT PRIMARY KEY NOT NULL,
+    token_hash TEXT NOT NULL UNIQUE,
+    project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+    role TEXT NOT NULL,
+    created_by TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    expires_at TEXT NOT NULL,
+    created_at TEXT NOT NULL,
+    used_at TEXT
+);
+
+CREATE TABLE IF NOT EXISTS email_tokens (
+    token_hash TEXT PRIMARY KEY NOT NULL,
+    user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    purpose TEXT NOT NULL,
+    expires_at TEXT NOT NULL,
+    created_at TEXT NOT NULL
 );
 
 CREATE INDEX IF NOT EXISTS idx_elements_project ON elements(project_id);
@@ -99,3 +118,10 @@ CREATE INDEX IF NOT EXISTS idx_panels_page ON panels(page_id);
 CREATE INDEX IF NOT EXISTS idx_links_project ON element_links(project_id);
 CREATE INDEX IF NOT EXISTS idx_grants_user ON project_grants(user_id);
 CREATE INDEX IF NOT EXISTS idx_sessions_user ON sessions(user_id);
+CREATE INDEX IF NOT EXISTS idx_sessions_expires ON sessions(expires_at);
+CREATE INDEX IF NOT EXISTS idx_invites_project ON project_invites(project_id);
+CREATE INDEX IF NOT EXISTS idx_email_tokens_user ON email_tokens(user_id);
+CREATE INDEX IF NOT EXISTS idx_projects_owner ON projects(owner_id);
+CREATE INDEX IF NOT EXISTS idx_projects_updated ON projects(updated_at DESC);
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_users_email ON users(email) WHERE email IS NOT NULL;
