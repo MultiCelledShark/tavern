@@ -343,7 +343,13 @@ export const api = {
   },
   createElement: async (
     projectId: string,
-    body: { module_type: ModuleType; title: string; parent_id?: string; metadata?: object }
+    body: {
+      module_type: ModuleType;
+      title: string;
+      parent_id?: string;
+      metadata?: object;
+      apply_template?: boolean;
+    }
   ) => {
     if (!body.title.trim()) throw new Error("title required");
     const el = await req<Element>(`/api/projects/${projectId}/elements`, {
@@ -404,6 +410,7 @@ export const api = {
     });
     return openPage(page, projectId);
   },
+  deletePage: (id: string) => req<void>(`/api/pages/${id}`, { method: "DELETE" }),
   updatePage: async (
     id: string,
     body: { title: string; description: string; sort_order: number },
@@ -696,97 +703,165 @@ export const api = {
     const fd = new FormData();
     fd.append("file", file);
     const res = await req<{
-      project: Project;
-      report: { notes: string[]; unsupported_modules: string[] };
+      intermediate: IntermediateProject;
+      report: ImportReport;
     }>("/api/import", { method: "POST", body: fd, headers: {} });
-    const project = await ensureProjectEncrypted(res.project.id);
-    return { ...res, project };
+    return materializeIntermediate(res.intermediate, res.report);
   },
   createTutorial: async () => {
-    const res = await req<{ project: Project; report: { notes: string[] } }>(
+    const res = await req<{ intermediate: IntermediateProject; report: ImportReport }>(
       "/api/projects/tutorial",
       { method: "POST", body: "{}" }
     );
-    const project = await ensureProjectEncrypted(res.project.id);
-    return { ...res, project };
+    return materializeIntermediate(res.intermediate, res.report);
   },
 };
 
-async function ensureProjectEncrypted(projectId: string): Promise<Project> {
-  const vault = getVault();
-  const raw = await req<Project>(`/api/projects/${projectId}`);
-  if (!vault) {
-    markProjectPlaintext(projectId);
-    return raw;
-  }
-  if (raw.key_wrap || getProjectKey(projectId)) {
-    return openProject(raw);
-  }
+export type IntermediatePanel = {
+  panel_type: string;
+  title: string;
+  content: Record<string, unknown>;
+  layout?: PanelLayout;
+  page_title?: string;
+};
 
-  // Server wrote plaintext (import/tutorial). Seal in place, then wrap the project key.
-  const key = await newProjectKey();
-  setProjectKey(projectId, key);
+export type IntermediateElement = {
+  module_type: string;
+  title: string;
+  parent_title?: string | null;
+  metadata?: Record<string, unknown>;
+  body_markdown?: string | null;
+  panels: IntermediatePanel[];
+  unsupported_source?: string | null;
+};
 
-  await api.updateProject(projectId, {
-    title: raw.title,
-    synopsis: raw.synopsis,
-    theme_json: raw.theme_json,
-  });
+export type IntermediateProject = {
+  title: string;
+  synopsis: string;
+  elements: IntermediateElement[];
+  links: { from_title: string; to_title: string; label: string; link_type: string }[];
+};
 
-  const elements = await req<Element[]>(`/api/projects/${projectId}/elements`);
-  for (const el of elements) {
-    rememberElementProject(el.id, projectId);
-    await api.updateElement(el.id, {
-      title: el.title,
-      parent_id: el.parent_id,
-      sort_order: el.sort_order,
-      metadata: (el.metadata || {}) as Record<string, unknown>,
-    });
+export type ImportReport = {
+  format?: string;
+  title?: string;
+  element_count?: number;
+  link_count?: number;
+  notes: string[];
+  unsupported_modules: string[];
+};
 
-    if (el.module_type === "manuscript") {
-      const body = await req<ManuscriptBody>(`/api/elements/${el.id}/manuscript`);
-      await api.saveManuscript(el.id, body.markdown, body.word_goal, body.updated_at);
-    }
+/** Create a project from intermediate JSON using sealed client writes (no plaintext DB dwell). */
+async function materializeIntermediate(
+  intermediate: IntermediateProject,
+  report: ImportReport
+): Promise<{ project: Project; report: ImportReport }> {
+  const project = await api.createProject(intermediate.title, intermediate.synopsis || "");
+  const titleToId = new Map<string, string>();
+  try {
+    for (const el of intermediate.elements) {
+      const moduleType = (el.module_type || "encyclopedia") as ModuleType;
+      const metadata: Record<string, unknown> = { ...(el.metadata || {}) };
+      if (el.unsupported_source) metadata.unsupported_source = el.unsupported_source;
+      const hasPanels = (el.panels || []).length > 0;
+      const created = await api.createElement(project.id, {
+        module_type: moduleType,
+        title: el.title,
+        metadata,
+        apply_template: !hasPanels && moduleType !== "manuscript",
+      });
+      titleToId.set(el.title, created.id);
 
-    const pages = await req<Page[]>(`/api/elements/${el.id}/pages`);
-    for (const page of pages) {
-      rememberPageProject(page.id, projectId);
-      await api.updatePage(
-        page.id,
-        {
-          title: page.title,
-          description: page.description || "",
-          sort_order: page.sort_order,
-        },
-        projectId
-      );
-      const panels = await req<Panel[]>(`/api/pages/${page.id}/panels`);
-      for (const panel of panels) {
-        rememberPanelPage(panel.id, page.id);
-        await api.updatePanel(panel.id, {
-          title: panel.title,
-          border_color: panel.border_color,
-          layout: panel.layout,
-          content: (panel.content || {}) as Record<string, unknown>,
-          sort_order: panel.sort_order,
-        });
+      if (moduleType === "manuscript") {
+        const body = await api.manuscript(created.id);
+        await api.saveManuscript(created.id, el.body_markdown || "", 0, body.updated_at);
+      } else if (hasPanels) {
+        const pages = await api.pages(created.id);
+        for (const page of pages) {
+          await api.deletePage(page.id);
+        }
+        const groups = new Map<string, IntermediatePanel[]>();
+        for (const panel of el.panels) {
+          const pageName = panel.page_title?.trim() || "Imported";
+          const list = groups.get(pageName) || [];
+          list.push(panel);
+          groups.set(pageName, list);
+        }
+        let pageIdx = 0;
+        for (const [pageTitle, panels] of groups) {
+          const page = await api.createPage(created.id, pageTitle);
+          // createPage doesn't set sort — update if needed
+          if (pageIdx > 0) {
+            await api.updatePage(
+              page.id,
+              { title: pageTitle, description: "", sort_order: pageIdx },
+              project.id
+            );
+          }
+          pageIdx += 1;
+          let i = 0;
+          for (const panel of panels) {
+            await api.createPanel(page.id, {
+              panel_type: panel.panel_type || "text",
+              title: panel.title || "",
+              content: panel.content || {},
+              layout: panel.layout,
+              sort_order: i,
+            });
+            i += 1;
+          }
+        }
+      } else if (el.body_markdown) {
+        const pages = await api.pages(created.id);
+        const page = pages[0];
+        if (page) {
+          const panels = await api.panels(page.id);
+          const text = panels.find((p) => p.panel_type === "text");
+          if (text) {
+            await api.updatePanel(text.id, {
+              title: text.title,
+              border_color: text.border_color,
+              layout: text.layout,
+              content: { ...(text.content || {}), markdown: el.body_markdown },
+              sort_order: text.sort_order,
+            });
+          }
+        }
       }
     }
-  }
 
-  const links = await req<ElementLink[]>(`/api/projects/${projectId}/links`);
-  for (const link of links) {
-    await api.deleteLink(link.id);
-    await api.createLink(projectId, {
-      from_element_id: link.from_element_id,
-      to_element_id: link.to_element_id,
-      label: link.label,
-      link_type: link.link_type,
-    });
-  }
+    for (const el of intermediate.elements) {
+      if (!el.parent_title) continue;
+      const childId = titleToId.get(el.title);
+      const parentId = titleToId.get(el.parent_title);
+      if (!childId || !parentId) continue;
+      const existing = await api.elements(project.id).then((els) => els.find((e) => e.id === childId));
+      if (!existing) continue;
+      await api.updateElement(childId, {
+        title: existing.title,
+        parent_id: parentId,
+        sort_order: existing.sort_order,
+        metadata: (existing.metadata || {}) as Record<string, unknown>,
+      });
+    }
 
-  await putOwnWrap(projectId, key);
-  return openProject(await req<Project>(`/api/projects/${projectId}`));
+    for (const link of intermediate.links || []) {
+      const from = titleToId.get(link.from_title);
+      const to = titleToId.get(link.to_title);
+      if (!from || !to) continue;
+      await api.createLink(project.id, {
+        from_element_id: from,
+        to_element_id: to,
+        label: link.label || "",
+        link_type: link.link_type || "related",
+      });
+    }
+
+    return { project: await api.getProject(project.id), report };
+  } catch (err) {
+    await api.deleteProject(project.id).catch(() => undefined);
+    throw err;
+  }
 }
 
 async function compileLocalIntermediate(projectId: string) {

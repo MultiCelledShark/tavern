@@ -1,3 +1,4 @@
+use axum::body::Body;
 use axum::extract::{ConnectInfo, Multipart, Path, Query, State};
 use axum::http::{header, HeaderMap, StatusCode};
 use axum::response::{Html, IntoResponse, Response};
@@ -8,6 +9,7 @@ use rust_embed::Embed;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::net::SocketAddr;
+use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Duration;
 use tavern_core::{
@@ -18,27 +20,73 @@ use tavern_export::{
     compile_manuscript_markdown, compile_world_bible_markdown, elements_to_intermediate,
     write_tavern_backup, write_with_pandoc, ChapterBody, ExportFormat,
 };
+use tokio_util::io::ReaderStream;
 use uuid::Uuid;
 
 use crate::auth::{AdminUser, AuthUser};
 use crate::security::client_ip;
 use crate::state::AppState;
 
-async fn ensure_owner_quota(
+async fn reserve_owner_quota(
     state: &Arc<AppState>,
     owner_id: Uuid,
     additional: u64,
 ) -> Result<(), ApiError> {
-    let used = crate::storage::owned_storage_bytes(state, owner_id)
+    // Refresh counter when dirty (includes DB text + on-disk assets/exports).
+    let used = crate::storage::storage_used(state, owner_id)
         .await
         .map_err(|e| ApiError::bad(&e.to_string()))?;
     let quota = state.config.user_quota_bytes;
-    if used.saturating_add(additional) > quota {
-        return Err(ApiError::bad(&format!(
-            "storage quota exceeded ({} of {} used). Delete projects or assets to free space.",
-            crate::storage::format_bytes(used),
-            crate::storage::format_bytes(quota),
-        )));
+    if additional == 0 {
+        if used > quota {
+            return Err(quota_exceeded(used, quota));
+        }
+        return Ok(());
+    }
+    let ok = state
+        .db
+        .try_reserve_storage(owner_id, additional, quota)
+        .await?;
+    if !ok {
+        return Err(quota_exceeded(used, quota));
+    }
+    Ok(())
+}
+
+fn quota_exceeded(used: u64, quota: u64) -> ApiError {
+    ApiError::bad(&format!(
+        "storage quota exceeded ({} of {} used). Delete projects or assets to free space.",
+        crate::storage::format_bytes(used),
+        crate::storage::format_bytes(quota),
+    ))
+}
+
+/// After writing a file that was reserved with `reserved` bytes, adjust the counter to `actual`.
+async fn settle_file_reservation(
+    state: &Arc<AppState>,
+    owner_id: Uuid,
+    reserved: u64,
+    actual: u64,
+    path: &std::path::Path,
+) -> Result<(), ApiError> {
+    let quota = state.config.user_quota_bytes;
+    if actual > reserved {
+        let extra = actual - reserved;
+        let ok = state
+            .db
+            .try_reserve_storage(owner_id, extra, quota)
+            .await?;
+        if !ok {
+            let _ = std::fs::remove_file(path);
+            let _ = state.db.release_storage(owner_id, reserved).await;
+            let used = state.db.get_storage_used(owner_id).await.unwrap_or(0);
+            return Err(quota_exceeded(used, quota));
+        }
+    } else if reserved > actual {
+        let _ = state
+            .db
+            .release_storage(owner_id, reserved - actual)
+            .await;
     }
     Ok(())
 }
@@ -50,6 +98,30 @@ async fn project_owner_id(state: &Arc<AppState>, project_id: Uuid) -> Result<Uui
         .await?
         .ok_or(ApiError::not_found("project"))?
         .owner_id)
+}
+
+async fn stream_file_response(
+    path: PathBuf,
+    content_type: String,
+    filename: String,
+) -> Result<Response, ApiError> {
+    let meta = tokio::fs::metadata(&path)
+        .await
+        .map_err(|_| ApiError::not_found("file"))?;
+    let file = tokio::fs::File::open(&path)
+        .await
+        .map_err(|_| ApiError::not_found("file"))?;
+    let body = Body::from_stream(ReaderStream::new(file));
+    Response::builder()
+        .status(StatusCode::OK)
+        .header(header::CONTENT_TYPE, content_type)
+        .header(
+            header::CONTENT_DISPOSITION,
+            format!("attachment; filename=\"{filename}\""),
+        )
+        .header(header::CONTENT_LENGTH, meta.len())
+        .body(body)
+        .map_err(|e| ApiError::bad(&e.to_string()))
 }
 
 #[derive(Embed)]
@@ -249,7 +321,7 @@ async fn storage_usage(
     AuthUser(user): AuthUser,
     State(state): State<Arc<AppState>>,
 ) -> Result<Json<serde_json::Value>, ApiError> {
-    let used = crate::storage::owned_storage_bytes(&state, user.id)
+    let used = crate::storage::storage_used(&state, user.id)
         .await
         .map_err(|e| ApiError::bad(&e.to_string()))?;
     let quota = state.config.user_quota_bytes;
@@ -773,24 +845,40 @@ async fn create_project(
     State(state): State<Arc<AppState>>,
     Json(body): Json<CreateProjectBody>,
 ) -> Result<(StatusCode, Json<ProjectView>), ApiError> {
-    let p = state
-        .db
-        .create_project(user.id, &body.title, body.synopsis.as_deref().unwrap_or(""))
-        .await?;
+    let synopsis = body.synopsis.as_deref().unwrap_or("");
+    let approx = (body.title.len() + synopsis.len()) as u64;
+    reserve_owner_quota(&state, user.id, approx.max(1)).await?;
+    let p = match state.db.create_project(user.id, &body.title, synopsis).await {
+        Ok(p) => p,
+        Err(e) => {
+            let _ = state.db.release_storage(user.id, approx.max(1)).await;
+            return Err(e.into());
+        }
+    };
     Ok((StatusCode::CREATED, Json(with_role(p, GrantRole::Owner))))
 }
 
 async fn create_tutorial_project(
     AuthUser(user): AuthUser,
     State(state): State<Arc<AppState>>,
-) -> Result<(StatusCode, Json<serde_json::Value>), ApiError> {
-    ensure_owner_quota(&state, user.id, 0).await?;
+) -> Result<Json<serde_json::Value>, ApiError> {
+    // Parse only — browser materializes with sealed writes when a vault is unlocked.
+    reserve_owner_quota(&state, user.id, 0).await?;
     const TUTORIAL: &str = include_str!("../../../../samples/tutorial_project.json");
     let (intermediate, report) =
         tavern_import::load_bytes(TUTORIAL.as_bytes(), Some("tutorial_project.json"))?;
     let prepared = tavern_import::prepare(intermediate, report)?;
-    let body = materialize_import(&state, user.id, prepared).await?;
-    Ok((StatusCode::CREATED, body))
+    Ok(Json(serde_json::json!({
+        "intermediate": prepared.project,
+        "report": {
+            "format": prepared.report.format,
+            "title": prepared.report.title,
+            "element_count": prepared.report.element_count,
+            "link_count": prepared.report.link_count,
+            "unsupported_modules": prepared.report.unsupported_modules,
+            "notes": prepared.report.notes
+        }
+    })))
 }
 
 async fn get_project(
@@ -837,6 +925,7 @@ async fn delete_project(
     Path(id): Path<Uuid>,
 ) -> Result<StatusCode, ApiError> {
     require_manage(&state, &user, id).await?;
+    let owner = project_owner_id(&state, id).await?;
     state.db.delete_project(id).await?;
     let assets = state.config.project_assets_dir(id);
     let exports = state.config.project_exports_dir(id);
@@ -848,6 +937,7 @@ async fn delete_project(
             }
         }
     }
+    let _ = state.db.mark_storage_dirty(owner).await;
     Ok(StatusCode::NO_CONTENT)
 }
 
@@ -1053,6 +1143,8 @@ async fn create_element(
             body.apply_template.unwrap_or(true),
         )
         .await?;
+    let owner = project_owner_id(&state, id).await?;
+    let _ = state.db.mark_storage_dirty(owner).await;
     Ok((StatusCode::CREATED, Json(el)))
 }
 
@@ -1231,6 +1323,8 @@ async fn create_panel(
             sort,
         )
         .await?;
+    let owner = project_owner_id(&state, el.project_id).await?;
+    let _ = state.db.mark_storage_dirty(owner).await;
     Ok((StatusCode::CREATED, Json(panel)))
 }
 
@@ -1251,19 +1345,20 @@ async fn update_panel(
 ) -> Result<Json<tavern_core::Panel>, ApiError> {
     let el = visible_element_for_panel(&state, &user, id).await?;
     require_edit(&state, &user, el.project_id).await?;
-    Ok(Json(
-        state
-            .db
-            .update_panel(
-                id,
-                &body.title,
-                body.border_color.as_deref(),
-                body.layout,
-                body.content,
-                body.sort_order,
-            )
-            .await?,
-    ))
+    let panel = state
+        .db
+        .update_panel(
+            id,
+            &body.title,
+            body.border_color.as_deref(),
+            body.layout,
+            body.content,
+            body.sort_order,
+        )
+        .await?;
+    let owner = project_owner_id(&state, el.project_id).await?;
+    let _ = state.db.mark_storage_dirty(owner).await;
+    Ok(Json(panel))
 }
 
 async fn delete_panel(
@@ -1274,6 +1369,8 @@ async fn delete_panel(
     let el = visible_element_for_panel(&state, &user, id).await?;
     require_edit(&state, &user, el.project_id).await?;
     state.db.delete_panel(id).await?;
+    let owner = project_owner_id(&state, el.project_id).await?;
+    let _ = state.db.mark_storage_dirty(owner).await;
     Ok(StatusCode::NO_CONTENT)
 }
 
@@ -1388,12 +1485,21 @@ async fn put_manuscript(
         return Err(ApiError::bad("manuscript too large (max 8MB)"));
     }
     let (current_md, current_goal, current_at) = state.db.get_manuscript(id).await?;
+    let owner = project_owner_id(&state, el.project_id).await?;
+    let old_len = current_md.len() as u64;
+    let new_len = body.markdown.len() as u64;
+    if new_len > old_len {
+        reserve_owner_quota(&state, owner, new_len - old_len).await?;
+    }
     let goal = body.word_goal.unwrap_or(current_goal);
     let Some(updated_at) = state
         .db
         .set_manuscript(id, &body.markdown, goal, body.updated_at.as_deref())
         .await?
     else {
+        if new_len > old_len {
+            let _ = state.db.release_storage(owner, new_len - old_len).await;
+        }
         return Err(ApiError::conflict(serde_json::json!({
             "error": "edit conflict",
             "markdown": current_md,
@@ -1402,6 +1508,9 @@ async fn put_manuscript(
             "updated_at": current_at,
         })));
     };
+    if old_len > new_len {
+        let _ = state.db.release_storage(owner, old_len - new_len).await;
+    }
     Ok(Json(ManuscriptBody {
         word_count: count_words(&body.markdown),
         markdown: body.markdown,
@@ -1525,7 +1634,8 @@ async fn export_project(
     };
 
     // Soft estimate: pandoc output is usually near markdown size (docx/epub can be larger).
-    ensure_owner_quota(&state, owner, (markdown.len() as u64).saturating_mul(2)).await?;
+    let estimate = (markdown.len() as u64).saturating_mul(2).max(1);
+    reserve_owner_quota(&state, owner, estimate).await?;
 
     let out_dir = state.config.project_exports_dir(id);
     let filename = format!(
@@ -1535,29 +1645,30 @@ async fn export_project(
         format.extension()
     );
     let out_path = out_dir.join(&filename);
-    write_with_pandoc(&markdown, &out_path, format)?;
-    let meta = std::fs::metadata(&out_path)?;
-    const MAX_EXPORT: u64 = 256 * 1024 * 1024;
-    if meta.len() > MAX_EXPORT {
-        let _ = std::fs::remove_file(&out_path);
-        return Err(ApiError::bad("export too large (max 256MB); split the project or delete assets"));
+    if let Err(e) = write_with_pandoc(&markdown, &out_path, format) {
+        let _ = state.db.release_storage(owner, estimate).await;
+        return Err(e.into());
     }
-    let bytes = std::fs::read(&out_path)?;
-    if let Err(e) = ensure_owner_quota(&state, owner, 0).await {
+    let meta = match std::fs::metadata(&out_path) {
+        Ok(m) => m,
+        Err(e) => {
+            let _ = state.db.release_storage(owner, estimate).await;
+            return Err(e.into());
+        }
+    };
+    const MAX_EXPORT: u64 = 256 * 1024 * 1024;
+    let actual = meta.len();
+    if actual > MAX_EXPORT {
         let _ = std::fs::remove_file(&out_path);
+        let _ = state.db.release_storage(owner, estimate).await;
+        return Err(ApiError::bad(
+            "export too large (max 256MB); split the project or delete assets",
+        ));
+    }
+    if let Err(e) = settle_file_reservation(&state, owner, estimate, actual, &out_path).await {
         return Err(e);
     }
-    Ok((
-        [
-            (header::CONTENT_TYPE, content_type_for(format)),
-            (
-                header::CONTENT_DISPOSITION,
-                format!("attachment; filename=\"{filename}\""),
-            ),
-        ],
-        bytes,
-    )
-        .into_response())
+    stream_file_response(out_path, content_type_for(format), filename).await
 }
 
 async fn backup_project(
@@ -1572,7 +1683,7 @@ async fn backup_project(
         ));
     }
     let owner = project_owner_id(&state, id).await?;
-    ensure_owner_quota(&state, owner, 0).await?;
+    reserve_owner_quota(&state, owner, 0).await?;
     let project = state
         .db
         .get_project(id)
@@ -1608,32 +1719,34 @@ async fn backup_project(
     let out_dir = state.config.project_exports_dir(id);
     std::fs::create_dir_all(&out_dir)?;
     let out = out_dir.join(format!("{}.tavern", sanitize(&project.title)));
-    write_tavern_backup(&out, &intermediate, Some(&assets))?;
-    let meta = std::fs::metadata(&out)?;
+    // Reserve a soft estimate from assets dir size + JSON overhead, then settle to actual.
+    let asset_estimate = crate::storage::dir_size(&assets).saturating_add(1_048_576);
+    reserve_owner_quota(&state, owner, asset_estimate).await?;
+    if let Err(e) = write_tavern_backup(&out, &intermediate, Some(&assets)) {
+        let _ = state.db.release_storage(owner, asset_estimate).await;
+        return Err(e.into());
+    }
+    let meta = match std::fs::metadata(&out) {
+        Ok(m) => m,
+        Err(e) => {
+            let _ = state.db.release_storage(owner, asset_estimate).await;
+            return Err(e.into());
+        }
+    };
     const MAX_BACKUP: u64 = 256 * 1024 * 1024;
-    if meta.len() > MAX_BACKUP {
+    let actual = meta.len();
+    if actual > MAX_BACKUP {
         let _ = std::fs::remove_file(&out);
+        let _ = state.db.release_storage(owner, asset_estimate).await;
         return Err(ApiError::bad(
             "backup too large (max 256MB); remove assets or export chapters separately",
         ));
     }
-    let bytes = std::fs::read(&out)?;
-    if let Err(e) = ensure_owner_quota(&state, owner, 0).await {
-        let _ = std::fs::remove_file(&out);
+    if let Err(e) = settle_file_reservation(&state, owner, asset_estimate, actual, &out).await {
         return Err(e);
     }
     let filename = format!("{}.tavern", sanitize(&project.title));
-    Ok((
-        [
-            (header::CONTENT_TYPE, "application/zip".to_string()),
-            (
-                header::CONTENT_DISPOSITION,
-                format!("attachment; filename=\"{filename}\""),
-            ),
-        ],
-        bytes,
-    )
-        .into_response())
+    stream_file_response(out, "application/zip".into(), filename).await
 }
 
 #[derive(Serialize)]
@@ -1719,9 +1832,12 @@ async fn upload_asset(
             return Err(ApiError::bad("file too large (max 12MB)"));
         }
         let owner = project_owner_id(&state, id).await?;
-        ensure_owner_quota(&state, owner, bytes.len() as u64).await?;
+        reserve_owner_quota(&state, owner, bytes.len() as u64).await?;
         let path = dir.join(&name);
-        std::fs::write(&path, &bytes)?;
+        if let Err(e) = std::fs::write(&path, &bytes) {
+            let _ = state.db.release_storage(owner, bytes.len() as u64).await;
+            return Err(e.into());
+        }
         stored = Some(AssetInfo {
             name: name.clone(),
             url: format!("/api/projects/{id}/assets/{name}"),
@@ -1781,9 +1897,12 @@ async fn delete_asset(
     if name.contains("..") || name.contains('/') || name.contains('\\') {
         return Err(ApiError::bad("invalid asset name"));
     }
+    let owner = project_owner_id(&state, id).await?;
     let path = state.config.project_assets_dir(id).join(&name);
     if path.is_file() {
+        let size = std::fs::metadata(&path).map(|m| m.len()).unwrap_or(0);
         std::fs::remove_file(&path)?;
+        let _ = state.db.release_storage(owner, size).await;
     }
     Ok(StatusCode::NO_CONTENT)
 }
@@ -1822,158 +1941,12 @@ async fn import_project(
     if bytes.len() > 32 * 1024 * 1024 {
         return Err(ApiError::bad("import too large (max 32MB)"));
     }
-    ensure_owner_quota(&state, user.id, bytes.len() as u64).await?;
+    // Parse only — do not persist plaintext. Client seals while materializing.
+    reserve_owner_quota(&state, user.id, 0).await?;
     let (intermediate, report) = tavern_import::load_bytes(&bytes, filename.as_deref())?;
     let prepared = tavern_import::prepare(intermediate, report)?;
-    materialize_import(&state, user.id, prepared).await
-}
-
-async fn materialize_import(
-    state: &AppState,
-    owner_id: Uuid,
-    prepared: tavern_import::PreparedImport,
-) -> Result<Json<serde_json::Value>, ApiError> {
-    let project = state
-        .db
-        .create_project(
-            owner_id,
-            &prepared.project.title,
-            &prepared.project.synopsis,
-        )
-        .await?;
-
-    let mut title_to_id: HashMap<String, Uuid> = HashMap::new();
-    for el in &prepared.project.elements {
-        let module = ModuleType::parse(&el.module_type).unwrap_or(ModuleType::Encyclopedia);
-        let mut meta = el.metadata.clone();
-        if let Some(src) = &el.unsupported_source {
-            meta.as_object_mut()
-                .map(|o| o.insert("unsupported_source".into(), serde_json::json!(src)));
-        }
-        let created = state
-            .db
-            .create_element(
-                project.id,
-                module,
-                &el.title,
-                None,
-                meta,
-                el.panels.is_empty() && module != ModuleType::Manuscript,
-            )
-            .await?;
-        title_to_id.insert(el.title.clone(), created.id);
-
-        if module == ModuleType::Manuscript {
-            let md = el.body_markdown.clone().unwrap_or_default();
-            let _ = state.db.set_manuscript(created.id, &md, 0, None).await?;
-        } else if !el.panels.is_empty() {
-            let pages = state.db.list_pages(created.id).await?;
-            for p in pages {
-                state.db.delete_page(p.id).await?;
-            }
-            let mut page_groups: Vec<(String, Vec<&tavern_core::IntermediatePanel>)> = Vec::new();
-            for panel in &el.panels {
-                let page_name = panel
-                    .page_title
-                    .as_deref()
-                    .filter(|s| !s.is_empty())
-                    .unwrap_or("Imported");
-                if let Some(group) = page_groups.iter_mut().find(|(t, _)| t == page_name) {
-                    group.1.push(panel);
-                } else {
-                    page_groups.push((page_name.to_string(), vec![panel]));
-                }
-            }
-            for (page_idx, (page_title, panels)) in page_groups.iter().enumerate() {
-                let page = state
-                    .db
-                    .create_page(created.id, page_title, "", page_idx as i64)
-                    .await?;
-                for (i, panel) in panels.iter().enumerate() {
-                    let ptype = PanelType::parse(&panel.panel_type).unwrap_or(PanelType::Text);
-                    let layout = panel
-                        .layout
-                        .clone()
-                        .unwrap_or_else(|| default_panel_layout_for(ptype.as_str(), i));
-                    state
-                        .db
-                        .create_panel(
-                            page.id,
-                            ptype,
-                            &panel.title,
-                            None,
-                            layout,
-                            panel.content.clone(),
-                            i as i64,
-                        )
-                        .await?;
-                }
-            }
-        } else if let Some(md) = &el.body_markdown {
-            let pages = state.db.list_pages(created.id).await?;
-            if let Some(page) = pages.first() {
-                let panels = state.db.list_panels(page.id).await?;
-                if let Some(panel) = panels.iter().find(|p| p.panel_type == PanelType::Text) {
-                    let mut content = panel.content.clone();
-                    content["markdown"] = serde_json::json!(md);
-                    state
-                        .db
-                        .update_panel(
-                            panel.id,
-                            &panel.title,
-                            panel.border_color.as_deref(),
-                            panel.layout.clone(),
-                            content,
-                            panel.sort_order,
-                        )
-                        .await?;
-                }
-            }
-        }
-    }
-
-    for el in &prepared.project.elements {
-        if let Some(parent_title) = &el.parent_title {
-            if let (Some(child), Some(parent)) =
-                (title_to_id.get(&el.title), title_to_id.get(parent_title))
-            {
-                if let Some(existing) = state.db.get_element(*child).await? {
-                    state
-                        .db
-                        .update_element(
-                            *child,
-                            &existing.title,
-                            Some(*parent),
-                            existing.sort_order,
-                            existing.metadata,
-                        )
-                        .await?;
-                }
-            }
-        }
-    }
-
-    for link in &prepared.project.links {
-        if let (Some(from), Some(to)) = (
-            title_to_id.get(&link.from_title),
-            title_to_id.get(&link.to_title),
-        ) {
-            state
-                .db
-                .create_link(
-                    project.id,
-                    *from,
-                    *to,
-                    &link.label,
-                    &link.link_type,
-                    serde_json::json!({}),
-                )
-                .await?;
-        }
-    }
-
     Ok(Json(serde_json::json!({
-        "project": project,
+        "intermediate": prepared.project,
         "report": {
             "format": prepared.report.format,
             "title": prepared.report.title,

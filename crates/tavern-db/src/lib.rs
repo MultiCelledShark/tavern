@@ -44,6 +44,9 @@ impl Db {
         sqlx::raw_sql(include_str!("migrations/004_vault.sql"))
             .execute(&self.pool)
             .await?;
+        sqlx::raw_sql(include_str!("migrations/005_storage_quota.sql"))
+            .execute(&self.pool)
+            .await?;
         Ok(())
     }
 
@@ -477,6 +480,146 @@ impl Db {
             .into_iter()
             .map(|r| Uuid::parse_str(r.get::<String, _>("id").as_str()).unwrap())
             .collect())
+    }
+
+    async fn ensure_storage_row(&self, user_id: Uuid) -> Result<()> {
+        sqlx::query(
+            "INSERT INTO user_storage (user_id, used_bytes, needs_reconcile, updated_at)
+             VALUES ($1, 0, TRUE, $2)
+             ON CONFLICT (user_id) DO NOTHING",
+        )
+        .bind(user_id.to_string())
+        .bind(Utc::now().to_rfc3339())
+        .execute(&self.pool)
+        .await?;
+        Ok(())
+    }
+
+    pub async fn storage_needs_reconcile(&self, user_id: Uuid) -> Result<bool> {
+        self.ensure_storage_row(user_id).await?;
+        let row = sqlx::query("SELECT needs_reconcile FROM user_storage WHERE user_id = $1")
+            .bind(user_id.to_string())
+            .fetch_one(&self.pool)
+            .await?;
+        Ok(row.get::<bool, _>("needs_reconcile"))
+    }
+
+    pub async fn get_storage_used(&self, user_id: Uuid) -> Result<u64> {
+        self.ensure_storage_row(user_id).await?;
+        let row = sqlx::query("SELECT used_bytes FROM user_storage WHERE user_id = $1")
+            .bind(user_id.to_string())
+            .fetch_one(&self.pool)
+            .await?;
+        Ok(row.get::<i64, _>("used_bytes").max(0) as u64)
+    }
+
+    pub async fn set_storage_used(&self, user_id: Uuid, used: u64) -> Result<()> {
+        self.ensure_storage_row(user_id).await?;
+        sqlx::query(
+            "UPDATE user_storage
+             SET used_bytes = $1, needs_reconcile = FALSE, updated_at = $2
+             WHERE user_id = $3",
+        )
+        .bind(used as i64)
+        .bind(Utc::now().to_rfc3339())
+        .bind(user_id.to_string())
+        .execute(&self.pool)
+        .await?;
+        Ok(())
+    }
+
+    pub async fn mark_storage_dirty(&self, user_id: Uuid) -> Result<()> {
+        self.ensure_storage_row(user_id).await?;
+        sqlx::query(
+            "UPDATE user_storage SET needs_reconcile = TRUE, updated_at = $1 WHERE user_id = $2",
+        )
+        .bind(Utc::now().to_rfc3339())
+        .bind(user_id.to_string())
+        .execute(&self.pool)
+        .await?;
+        Ok(())
+    }
+
+    /// Atomically reserve `additional` bytes against `quota`. Returns false if it would exceed.
+    pub async fn try_reserve_storage(
+        &self,
+        user_id: Uuid,
+        additional: u64,
+        quota: u64,
+    ) -> Result<bool> {
+        if additional == 0 {
+            let used = self.get_storage_used(user_id).await?;
+            return Ok(used <= quota);
+        }
+        self.ensure_storage_row(user_id).await?;
+        let row = sqlx::query(
+            "UPDATE user_storage
+             SET used_bytes = used_bytes + $1, updated_at = $2
+             WHERE user_id = $3 AND used_bytes + $1 <= $4
+             RETURNING used_bytes",
+        )
+        .bind(additional as i64)
+        .bind(Utc::now().to_rfc3339())
+        .bind(user_id.to_string())
+        .bind(quota as i64)
+        .fetch_optional(&self.pool)
+        .await?;
+        Ok(row.is_some())
+    }
+
+    pub async fn release_storage(&self, user_id: Uuid, amount: u64) -> Result<()> {
+        if amount == 0 {
+            return Ok(());
+        }
+        self.ensure_storage_row(user_id).await?;
+        sqlx::query(
+            "UPDATE user_storage
+             SET used_bytes = GREATEST(0, used_bytes - $1), updated_at = $2
+             WHERE user_id = $3",
+        )
+        .bind(amount as i64)
+        .bind(Utc::now().to_rfc3339())
+        .bind(user_id.to_string())
+        .execute(&self.pool)
+        .await?;
+        Ok(())
+    }
+
+    /// Sum of owned project text payloads in Postgres (titles, manuscripts, panels, etc.).
+    pub async fn owned_db_content_bytes(&self, owner_id: Uuid) -> Result<u64> {
+        let row = sqlx::query(
+            "SELECT
+               COALESCE((
+                 SELECT SUM(octet_length(p.title) + octet_length(p.synopsis))
+                 FROM projects p WHERE p.owner_id = $1
+               ), 0)
+               + COALESCE((
+                 SELECT SUM(octet_length(e.title) + octet_length(e.metadata))
+                 FROM elements e
+                 INNER JOIN projects p ON p.id = e.project_id
+                 WHERE p.owner_id = $1
+               ), 0)
+               + COALESCE((
+                 SELECT SUM(octet_length(mb.markdown))
+                 FROM manuscript_bodies mb
+                 INNER JOIN elements e ON e.id = mb.element_id
+                 INNER JOIN projects p ON p.id = e.project_id
+                 WHERE p.owner_id = $1
+               ), 0)
+               + COALESCE((
+                 SELECT SUM(octet_length(pn.title) + octet_length(pn.content::text))
+                 FROM panels pn
+                 INNER JOIN pages pg ON pg.id = pn.page_id
+                 INNER JOIN elements e ON e.id = pg.element_id
+                 INNER JOIN projects p ON p.id = e.project_id
+                 WHERE p.owner_id = $1
+               ), 0)
+               AS total",
+        )
+        .bind(owner_id.to_string())
+        .fetch_one(&self.pool)
+        .await?;
+        Ok(row.get::<i64, _>("total").max(0) as u64)
     }
 
     pub async fn project_access(&self, user: &User, project_id: Uuid) -> Result<Option<GrantRole>> {
