@@ -1,5 +1,9 @@
 # Deploying Tavern (Debian / systemd)
 
+## Go-live posture
+
+Code is fit for a **careful private launch** (admin / invite-only) behind nginx with the app on loopback — not for open public signup on day one. Full must-haves and caveats: [docs/DEBIAN_CUTOVER.md](../../docs/DEBIAN_CUTOVER.md#go-live-posture-honest-assessment).
+
 ## Public checklist (safe for GitHub)
 
 1. Build a static (or musl) release binary: `cargo build -p tavern-server --release`

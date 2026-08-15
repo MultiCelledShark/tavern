@@ -2,7 +2,29 @@
 
 Public checklist for moving Tavern from the current LAN/dev host onto a Debian server behind nginx. **Do not put real hostnames, LAN IPs, or cert paths in this file** — those belong in the Forgejo wiki or gitignored `docs/homelab.md`.
 
-Status: **planned only**. Update this doc whenever app behavior changes the deploy surface.
+Status: **planned only** (code is go-live capable for a careful private launch — see below).
+
+## Go-live posture (honest assessment)
+
+**Ready for:** a careful, invite-only / admin-only launch behind TLS on a single Debian host (loopback app + nginx). Not ready to “flip DNS and open public signup.”
+
+**Must-haves on day one**
+
+1. `TAVERN_LISTEN=127.0.0.1:8084` — app never on the WAN
+2. `TAVERN_COOKIE_SECURE=1` and `TAVERN_TRUST_PROXY=1` — proxy overwrites `X-Forwarded-*`
+3. `TAVERN_PUBLIC_URL` set to the public HTTPS origin (no trailing slash)
+4. `TAVERN_SIGNUP` left off until SMTP is proven (no log-only mail with signup enabled)
+5. Strong `TAVERN_ADMIN_PASS`; Postgres + `/var/lib/tavern` backups planned
+6. nginx: TLS only on `:443`, `client_max_body_size` ≥ `32m`
+
+**Caveats to keep in mind**
+
+- First live users should be you + invited writers, not open internet signup.
+- Auth rate limits are in-process; edge limits on nginx are still wise.
+- Vault material is memory-first (session stash only across refresh via `pagehide`) — expect unlock after a hard reload.
+- Passing security review is not the same as battle-tested production; smoke-test login → unlock → encrypted project → invite → asset upload on the live host before relying on it.
+
+**Hold public signup** until mail delivery works and that smoke checklist passes.
 
 ## Goals
 
@@ -92,6 +114,7 @@ Add a line here if a PR changes deploy assumptions:
 | Date / commit | Change | Deploy impact |
 |---------------|--------|----------------|
 | 2026-08-11 / UX+assets | Project asset uploads + maps/timeline | Need RW data dir, nginx body size ≥ 12MB, migrate `projects/*/assets` |
+| 2026-08-15 | Go-live posture note | Private/invite-only first; signup off until SMTP; see section above |
 | (pending) | Debian cutover execution | — |
 
 ## Out of scope for this plan
