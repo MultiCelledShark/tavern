@@ -17,8 +17,13 @@ const InvitePage = lazy(() => import("./pages/InvitePage"));
 
 function safeNext(search: string): string {
   const n = new URLSearchParams(search).get("next");
-  if (n && n.startsWith("/") && !n.startsWith("//") && !n.includes("\\")) return n;
-  return "/";
+  if (!n || !n.startsWith("/") || n.startsWith("//") || n.includes("\\")) return "/";
+  // Never honor fragments in next= — secrets must not ride query strings into logs.
+  const pathOnly = n.split("#")[0] || "/";
+  if (!pathOnly.startsWith("/") || pathOnly.startsWith("//") || pathOnly.includes("\\")) {
+    return "/";
+  }
+  return pathOnly;
 }
 
 function RouteFallback() {

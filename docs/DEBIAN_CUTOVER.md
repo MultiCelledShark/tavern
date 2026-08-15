@@ -16,10 +16,10 @@ Status: **planned only**. Update this doc whenever app behavior changes the depl
 | Concern | Today | Cutover note |
 |--------|--------|--------------|
 | Binary | `cargo run -p tavern-server` embeds `web/dist` via rust-embed | Release build on a machine with Node (or use prebuilt `web/dist` in tree), then copy `/usr/local/bin/tavern` |
-| Listen | `TAVERN_LISTEN` default `0.0.0.0:8084` | Prefer `127.0.0.1:8084` behind nginx |
+| Listen | `TAVERN_LISTEN` default `127.0.0.1:8084` | Keep loopback behind nginx; `TRUST_PROXY=1` refuses non-loopback |
 | Data | `TAVERN_DATABASE_URL` (Postgres) + `TAVERN_DATA_DIR` for `projects/*/assets`, imports/exports | Dump/restore Postgres separately from the assets tree |
 | Auth cookies | `TAVERN_COOKIE_SECURE`, `TAVERN_TRUST_PROXY` | Set both to `1` when HTTPS terminates at nginx |
-| Uploads | `POST /api/projects/{id}/assets` (images ≤ 12MB); `POST /api/import` (≤ 32MB) | nginx `client_max_body_size` must be ≥ 32MB for Campfire HTML exports with embedded images (recommend `32m` or `64m`) |
+| Uploads | `POST /api/projects/{id}/assets` (images ≤ 12MB); imports are browser-parsed (no server plaintext ingest) | nginx `client_max_body_size` must be ≥ 32MB for large asset/export bodies (recommend `32m` or `64m`) |
 | Export | pandoc optional for DOCX/EPUB/PDF | Install `pandoc` on the server if those formats matter |
 | Unit | `deploy/debian/tavern.service` | `ReadWritePaths=/var/lib/tavern` already covers DB + assets |
 

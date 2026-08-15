@@ -66,6 +66,8 @@ const MAX_METADATA_BYTES: usize = 256 * 1024;
 const MAX_PANEL_CONTENT_BYTES: usize = 1024 * 1024;
 const MAX_TEMPLATE_BYTES: usize = 1024 * 1024;
 const MAX_THEME_BYTES: usize = 64 * 1024;
+const MAX_PAGE_DESCRIPTION_BYTES: usize = 64 * 1024;
+const MAX_LINK_LABEL_CHARS: usize = 512;
 
 fn json_bytes(v: &serde_json::Value) -> usize {
     v.to_string().len()
@@ -1288,15 +1290,25 @@ async fn create_page(
 ) -> Result<(StatusCode, Json<tavern_core::Page>), ApiError> {
     let el = visible_element(&state, &user, id).await?;
     require_edit(&state, &user, el.project_id).await?;
-    let page = state
+    ensure_title(&body.title)?;
+    let description = body.description.as_deref().unwrap_or("");
+    if description.len() > MAX_PAGE_DESCRIPTION_BYTES {
+        return Err(ApiError::bad("page description too large (max 64KB)"));
+    }
+    let owner = project_owner_id(&state, el.project_id).await?;
+    let add = (body.title.len() + description.len()) as u64;
+    reserve_owner_quota(&state, owner, add.max(1)).await?;
+    let page = match state
         .db
-        .create_page(
-            id,
-            &body.title,
-            body.description.as_deref().unwrap_or(""),
-            body.sort_order.unwrap_or(0),
-        )
-        .await?;
+        .create_page(id, &body.title, description, body.sort_order.unwrap_or(0))
+        .await
+    {
+        Ok(p) => p,
+        Err(e) => {
+            let _ = state.db.release_storage(owner, add.max(1)).await;
+            return Err(e.into());
+        }
+    };
     Ok((StatusCode::CREATED, Json(page)))
 }
 
@@ -1315,12 +1327,36 @@ async fn update_page(
 ) -> Result<Json<tavern_core::Page>, ApiError> {
     let pages_el = visible_element_for_page(&state, &user, id).await?;
     require_edit(&state, &user, pages_el.project_id).await?;
-    Ok(Json(
-        state
-            .db
-            .update_page(id, &body.title, &body.description, body.sort_order)
-            .await?,
-    ))
+    ensure_title(&body.title)?;
+    if body.description.len() > MAX_PAGE_DESCRIPTION_BYTES {
+        return Err(ApiError::bad("page description too large (max 64KB)"));
+    }
+    let Some(prev) = state.db.get_page(id).await? else {
+        return Err(ApiError::not_found("page"));
+    };
+    let owner = project_owner_id(&state, pages_el.project_id).await?;
+    let old = (prev.title.len() + prev.description.len()) as u64;
+    let new = (body.title.len() + body.description.len()) as u64;
+    if new > old {
+        reserve_owner_quota(&state, owner, new - old).await?;
+    }
+    let page = match state
+        .db
+        .update_page(id, &body.title, &body.description, body.sort_order)
+        .await
+    {
+        Ok(p) => p,
+        Err(e) => {
+            if new > old {
+                let _ = state.db.release_storage(owner, new - old).await;
+            }
+            return Err(e.into());
+        }
+    };
+    if old > new {
+        let _ = state.db.release_storage(owner, old - new).await;
+    }
+    Ok(Json(page))
 }
 
 async fn delete_page(
@@ -1330,7 +1366,9 @@ async fn delete_page(
 ) -> Result<StatusCode, ApiError> {
     let el = visible_element_for_page(&state, &user, id).await?;
     require_edit(&state, &user, el.project_id).await?;
+    let owner = project_owner_id(&state, el.project_id).await?;
     state.db.delete_page(id).await?;
+    let _ = state.db.mark_storage_dirty(owner).await;
     Ok(StatusCode::NO_CONTENT)
 }
 
@@ -1498,17 +1536,33 @@ async fn create_link(
     {
         return Err(ApiError::bad("link endpoints must belong to this project"));
     }
-    let link = state
+    let label = body.label.as_deref().unwrap_or("");
+    if label.chars().count() > MAX_LINK_LABEL_CHARS {
+        return Err(ApiError::bad("link label too long"));
+    }
+    let meta = body.metadata.clone().unwrap_or_else(|| serde_json::json!({}));
+    ensure_meta_size(&meta)?;
+    let owner = project_owner_id(&state, id).await?;
+    let add = (label.len() + json_bytes(&meta)) as u64;
+    reserve_owner_quota(&state, owner, add.max(1)).await?;
+    let link = match state
         .db
         .create_link(
             id,
             body.from_element_id,
             body.to_element_id,
-            body.label.as_deref().unwrap_or(""),
+            label,
             body.link_type.as_deref().unwrap_or("related"),
-            body.metadata.unwrap_or_else(|| serde_json::json!({})),
+            meta,
         )
-        .await?;
+        .await
+    {
+        Ok(l) => l,
+        Err(e) => {
+            let _ = state.db.release_storage(owner, add.max(1)).await;
+            return Err(e.into());
+        }
+    };
     Ok((StatusCode::CREATED, Json(link)))
 }
 
@@ -1529,7 +1583,9 @@ async fn delete_link(
         return Err(ApiError::not_found("link"));
     }
     require_edit(&state, &user, link.project_id).await?;
+    let owner = project_owner_id(&state, link.project_id).await?;
     state.db.delete_link(id).await?;
+    let _ = state.db.mark_storage_dirty(owner).await;
     Ok(StatusCode::NO_CONTENT)
 }
 

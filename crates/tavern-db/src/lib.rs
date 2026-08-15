@@ -606,7 +606,9 @@ impl Db {
         let row = sqlx::query(
             "SELECT
                COALESCE((
-                 SELECT SUM(octet_length(p.title) + octet_length(p.synopsis))
+                 SELECT SUM(
+                   octet_length(p.title) + octet_length(p.synopsis) + octet_length(p.theme_json)
+                 )
                  FROM projects p WHERE p.owner_id = $1
                ), 0)
                + COALESCE((
@@ -623,11 +625,26 @@ impl Db {
                  WHERE p.owner_id = $1
                ), 0)
                + COALESCE((
-                 SELECT SUM(octet_length(pn.title) + octet_length(pn.content::text))
+                 SELECT SUM(octet_length(pg.title) + octet_length(pg.description))
+                 FROM pages pg
+                 INNER JOIN elements e ON e.id = pg.element_id
+                 INNER JOIN projects p ON p.id = e.project_id
+                 WHERE p.owner_id = $1
+               ), 0)
+               + COALESCE((
+                 SELECT SUM(octet_length(pn.title) + octet_length(pn.content_json))
                  FROM panels pn
                  INNER JOIN pages pg ON pg.id = pn.page_id
                  INNER JOIN elements e ON e.id = pg.element_id
                  INNER JOIN projects p ON p.id = e.project_id
+                 WHERE p.owner_id = $1
+               ), 0)
+               + COALESCE((
+                 SELECT SUM(
+                   octet_length(l.label) + octet_length(COALESCE(l.metadata, ''))
+                 )
+                 FROM element_links l
+                 INNER JOIN projects p ON p.id = l.project_id
                  WHERE p.owner_id = $1
                ), 0)
                AS total",
@@ -1166,6 +1183,22 @@ impl Db {
                 description: r.get("description"),
             })
             .collect())
+    }
+
+    pub async fn get_page(&self, id: Uuid) -> Result<Option<Page>> {
+        let row = sqlx::query(
+            "SELECT id, element_id, title, sort_order, description FROM pages WHERE id = $1",
+        )
+        .bind(id.to_string())
+        .fetch_optional(&self.pool)
+        .await?;
+        Ok(row.map(|r| Page {
+            id: Uuid::parse_str(r.get::<String, _>("id").as_str()).unwrap(),
+            element_id: Uuid::parse_str(r.get::<String, _>("element_id").as_str()).unwrap(),
+            title: r.get("title"),
+            sort_order: r.get("sort_order"),
+            description: r.get("description"),
+        }))
     }
 
     pub async fn update_page(

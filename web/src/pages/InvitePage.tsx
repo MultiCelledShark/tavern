@@ -1,33 +1,70 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useState } from "react";
 import { api, User } from "../api/client";
 import { Link, Navigate, useHash, useNavigate, usePath } from "../lib/router";
+
+const PENDING_INVITE_KEY = "tavern_pending_invite";
+
+function readStowedInvite(): string {
+  try {
+    return sessionStorage.getItem(PENDING_INVITE_KEY) || "";
+  } catch {
+    return "";
+  }
+}
+
+function stowInvite(token: string) {
+  try {
+    sessionStorage.setItem(PENDING_INVITE_KEY, token);
+  } catch {
+    /* private mode / quota */
+  }
+}
+
+function clearStowedInvite() {
+  try {
+    sessionStorage.removeItem(PENDING_INVITE_KEY);
+  } catch {
+    /* ignore */
+  }
+}
 
 export default function InvitePage({ user }: { user: User | null }) {
   const path = usePath();
   const hash = useHash();
-  const token = useMemo(() => {
-    if (hash) return hash;
-    // Legacy path-based invites: /invite/<token>
-    if (path.startsWith("/invite/")) {
-      try {
-        return decodeURIComponent(path.slice("/invite/".length));
-      } catch {
-        return "";
-      }
-    }
-    return "";
-  }, [hash, path]);
   const navigate = useNavigate();
+  const [token, setToken] = useState("");
   const [error, setError] = useState<string | null>(null);
 
-  // Preserve the secret in the fragment across the login redirect.
-  const next = token ? `/invite#${encodeURIComponent(token)}` : "/invite";
+  // Resolve token from fragment, legacy path, or sessionStorage — never put it in ?next=.
+  useEffect(() => {
+    let t = "";
+    if (hash) {
+      t = hash;
+    } else if (path.startsWith("/invite/")) {
+      try {
+        t = decodeURIComponent(path.slice("/invite/".length));
+      } catch {
+        t = "";
+      }
+    } else {
+      t = readStowedInvite();
+    }
+    if (t) {
+      stowInvite(t);
+      // Scrub secret from the address bar (path and fragment both end up in history/logs).
+      if (path !== "/invite" || hash) {
+        navigate("/invite", { replace: true });
+      }
+    }
+    setToken(t);
+  }, [hash, path, navigate]);
 
   useEffect(() => {
     if (!user || !token) return;
     (async () => {
       try {
         const res = await api.acceptInvite(token);
+        clearStowedInvite();
         navigate(`/project/${res.project_id}`, { replace: true });
       } catch (e) {
         setError(e instanceof Error ? e.message : "Invite failed");
@@ -36,7 +73,8 @@ export default function InvitePage({ user }: { user: User | null }) {
   }, [user, token, navigate]);
 
   if (!user) {
-    return <Navigate to={`/login?next=${encodeURIComponent(next)}`} replace />;
+    // Token stays in sessionStorage only — query string must stay log-safe.
+    return <Navigate to="/login?next=%2Finvite" replace />;
   }
 
   return (
