@@ -1,11 +1,12 @@
 import { FormEvent, useMemo, useState } from "react";
 import { api } from "../api/client";
 import { parseEnvelope, rewrapVaultPassword, unlockWithRecovery } from "../crypto/vault";
-import { Link, useSearchParams } from "../lib/router";
+import { Link, useHash, useSearchParams } from "../lib/router";
 
 export default function ResetPage() {
   const [params] = useSearchParams();
-  const token = useMemo(() => params.get("token") || "", [params]);
+  const hash = useHash();
+  const token = useMemo(() => hash || params.get("token") || "", [hash, params]);
   const [password, setPassword] = useState("");
   const [recoveryKey, setRecoveryKey] = useState("");
   const [error, setError] = useState<string | null>(null);

@@ -1,20 +1,27 @@
 import { useEffect, useMemo, useState } from "react";
 import { api, User } from "../api/client";
-import { Link, Navigate, useNavigate, usePath } from "../lib/router";
+import { Link, Navigate, useHash, useNavigate, usePath } from "../lib/router";
 
 export default function InvitePage({ user }: { user: User | null }) {
   const path = usePath();
+  const hash = useHash();
   const token = useMemo(() => {
-    try {
-      return decodeURIComponent(path.slice("/invite/".length));
-    } catch {
-      return "";
+    if (hash) return hash;
+    // Legacy path-based invites: /invite/<token>
+    if (path.startsWith("/invite/")) {
+      try {
+        return decodeURIComponent(path.slice("/invite/".length));
+      } catch {
+        return "";
+      }
     }
-  }, [path]);
+    return "";
+  }, [hash, path]);
   const navigate = useNavigate();
   const [error, setError] = useState<string | null>(null);
 
-  const next = `/invite/${encodeURIComponent(token)}`;
+  // Preserve the secret in the fragment across the login redirect.
+  const next = token ? `/invite#${encodeURIComponent(token)}` : "/invite";
 
   useEffect(() => {
     if (!user || !token) return;

@@ -76,9 +76,23 @@ pub async fn reconcile_owner_storage(
 }
 
 /// Ensure the counter is fresh, then return used bytes.
+/// Debounce reconciles so alternating create/GET cannot force a full disk walk every request.
 pub async fn storage_used(state: &Arc<AppState>, owner_id: Uuid) -> anyhow::Result<u64> {
     if state.db.storage_needs_reconcile(owner_id).await? {
-        return reconcile_owner_storage(state, owner_id).await;
+        let updated = state.db.storage_updated_at(owner_id).await?;
+        let stale = updated
+            .as_deref()
+            .and_then(|s| chrono::DateTime::parse_from_rfc3339(s).ok())
+            .map(|t| {
+                chrono::Utc::now()
+                    .signed_duration_since(t.with_timezone(&chrono::Utc))
+                    .num_seconds()
+                    >= 30
+            })
+            .unwrap_or(true);
+        if stale {
+            return reconcile_owner_storage(state, owner_id).await;
+        }
     }
     Ok(state.db.get_storage_used(owner_id).await?)
 }

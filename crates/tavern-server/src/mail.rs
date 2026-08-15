@@ -70,7 +70,8 @@ impl Mailer {
     }
 
     pub fn send_verify(&self, to: &str, token: &str) {
-        let url = format!("{}/verify?token={token}", self.public_url);
+        // Fragment keeps the secret out of reverse-proxy access logs.
+        let url = format!("{}/verify#{}", self.public_url, token);
         self.spawn_send(
             to.to_string(),
             "Verify your Tavern account".into(),
@@ -81,7 +82,7 @@ impl Mailer {
     }
 
     pub fn send_reset(&self, to: &str, token: &str) {
-        let url = format!("{}/reset?token={token}", self.public_url);
+        let url = format!("{}/reset#{}", self.public_url, token);
         self.spawn_send(
             to.to_string(),
             "Reset your Tavern password".into(),

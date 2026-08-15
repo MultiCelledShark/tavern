@@ -1,23 +1,32 @@
-import { useEffect, useState, type ReactNode } from "react";
+import { lazy, Suspense, useEffect, useState, type ReactNode } from "react";
 import { api, User } from "./api/client";
 import TipHost from "./components/TipHost";
 import { Navigate, usePath } from "./lib/router";
 import LoginPage from "./pages/LoginPage";
-import SignupPage from "./pages/SignupPage";
-import ForgotPage from "./pages/ForgotPage";
-import ResetPage from "./pages/ResetPage";
-import VerifyPage from "./pages/VerifyPage";
-import UnlockPage from "./pages/UnlockPage";
-import ProjectsPage from "./pages/ProjectsPage";
-import ProjectWorkspace from "./pages/ProjectWorkspace";
-import UsersPage from "./pages/UsersPage";
-import InvitePage from "./pages/InvitePage";
 import { clearVault, getVault, restoreVault } from "./crypto/session";
+
+const SignupPage = lazy(() => import("./pages/SignupPage"));
+const ForgotPage = lazy(() => import("./pages/ForgotPage"));
+const ResetPage = lazy(() => import("./pages/ResetPage"));
+const VerifyPage = lazy(() => import("./pages/VerifyPage"));
+const UnlockPage = lazy(() => import("./pages/UnlockPage"));
+const ProjectsPage = lazy(() => import("./pages/ProjectsPage"));
+const ProjectWorkspace = lazy(() => import("./pages/ProjectWorkspace"));
+const UsersPage = lazy(() => import("./pages/UsersPage"));
+const InvitePage = lazy(() => import("./pages/InvitePage"));
 
 function safeNext(search: string): string {
   const n = new URLSearchParams(search).get("next");
   if (n && n.startsWith("/") && !n.startsWith("//") && !n.includes("\\")) return n;
   return "/";
+}
+
+function RouteFallback() {
+  return (
+    <div className="login-page">
+      <p className="muted">Loading…</p>
+    </div>
+  );
 }
 
 export default function App() {
@@ -91,7 +100,7 @@ export default function App() {
     page = <ResetPage />;
   } else if (path === "/verify") {
     page = <VerifyPage />;
-  } else if (path.startsWith("/invite/")) {
+  } else if (path === "/invite" || path.startsWith("/invite/")) {
     page =
       locked && user ? (
         <UnlockPage user={user} onReady={vaultUnlocked} onLogout={logout} />
@@ -135,7 +144,7 @@ export default function App() {
   return (
     <>
       <TipHost />
-      {page}
+      <Suspense fallback={<RouteFallback />}>{page}</Suspense>
     </>
   );
 }

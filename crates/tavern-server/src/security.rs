@@ -32,7 +32,7 @@ pub async fn security_headers(
     if let Ok(csp) = HeaderValue::from_str(CSP) {
         headers.insert(header::CONTENT_SECURITY_POLICY, csp);
     }
-    if state.config.cookie_secure {
+    if state.config.cookie_secure || state.config.trust_proxy {
         headers.insert(
             header::STRICT_TRANSPORT_SECURITY,
             HeaderValue::from_static("max-age=31536000; includeSubDomains"),
@@ -42,17 +42,10 @@ pub async fn security_headers(
 }
 
 /// Peer address, or the last X-Forwarded-For hop when nginx is trusted.
-/// Last hop is what the proxy observed; the client can spoof earlier entries.
+/// Prefer XFF last hop (what the proxy appended); X-Real-IP is a fallback only
+/// because clients can spoof it if the proxy does not overwrite it.
 pub fn client_ip(headers: &HeaderMap, peer: Option<SocketAddr>, trust_proxy: bool) -> String {
     if trust_proxy {
-        if let Some(real) = headers
-            .get("x-real-ip")
-            .and_then(|v| v.to_str().ok())
-            .map(str::trim)
-            .filter(|s| !s.is_empty())
-        {
-            return real.to_string();
-        }
         if let Some(xff) = headers.get("x-forwarded-for").and_then(|v| v.to_str().ok()) {
             if let Some(last) = xff
                 .split(',')
@@ -62,6 +55,14 @@ pub fn client_ip(headers: &HeaderMap, peer: Option<SocketAddr>, trust_proxy: boo
             {
                 return last.to_string();
             }
+        }
+        if let Some(real) = headers
+            .get("x-real-ip")
+            .and_then(|v| v.to_str().ok())
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+        {
+            return real.to_string();
         }
     }
     peer.map(|a| a.ip().to_string())

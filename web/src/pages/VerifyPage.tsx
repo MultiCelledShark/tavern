@@ -1,10 +1,11 @@
 import { useEffect, useMemo, useState } from "react";
 import { api } from "../api/client";
-import { Link, useSearchParams } from "../lib/router";
+import { Link, useHash, useSearchParams } from "../lib/router";
 
 export default function VerifyPage() {
   const [params] = useSearchParams();
-  const token = useMemo(() => params.get("token") || "", [params]);
+  const hash = useHash();
+  const token = useMemo(() => hash || params.get("token") || "", [hash, params]);
   const [status, setStatus] = useState<"working" | "ok" | "bad">("working");
   const [message, setMessage] = useState("Confirming your email…");
 

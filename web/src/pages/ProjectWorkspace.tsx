@@ -777,7 +777,7 @@ export default function ProjectWorkspace({
               data-tip={TIPS.inviteLink}
               onClick={async () => {
                 const res = await api.createInvite(projectId, grantRole);
-                const url = `${window.location.origin}/invite/${res.token}`;
+                const url = `${window.location.origin}/invite#${encodeURIComponent(res.token)}`;
                 try {
                   await navigator.clipboard.writeText(url);
                 } catch {

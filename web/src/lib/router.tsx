@@ -71,6 +71,20 @@ export function useSearchParams(): [URLSearchParams] {
   return useMemo(() => [new URLSearchParams(location.split("?")[1]?.split("#")[0] || "")], [location]);
 }
 
+/** Raw location hash without leading `#` (token-bearing links). */
+export function useHash(): string {
+  const { location } = useRouter();
+  return useMemo(() => {
+    const i = location.indexOf("#");
+    if (i < 0) return "";
+    try {
+      return decodeURIComponent(location.slice(i + 1));
+    } catch {
+      return location.slice(i + 1);
+    }
+  }, [location]);
+}
+
 /** `/project/:projectId` → projectId, else null. */
 export function useProjectId(): string | null {
   const path = usePath();

@@ -61,6 +61,30 @@ fn quota_exceeded(used: u64, quota: u64) -> ApiError {
     ))
 }
 
+const MAX_TITLE_CHARS: usize = 512;
+const MAX_METADATA_BYTES: usize = 256 * 1024;
+const MAX_PANEL_CONTENT_BYTES: usize = 1024 * 1024;
+const MAX_TEMPLATE_BYTES: usize = 1024 * 1024;
+const MAX_THEME_BYTES: usize = 64 * 1024;
+
+fn json_bytes(v: &serde_json::Value) -> usize {
+    v.to_string().len()
+}
+
+fn ensure_title(s: &str) -> Result<(), ApiError> {
+    if s.chars().count() > MAX_TITLE_CHARS {
+        return Err(ApiError::bad("title too long"));
+    }
+    Ok(())
+}
+
+fn ensure_meta_size(v: &serde_json::Value) -> Result<(), ApiError> {
+    if json_bytes(v) > MAX_METADATA_BYTES {
+        return Err(ApiError::bad("metadata too large (max 256KB)"));
+    }
+    Ok(())
+}
+
 /// After writing a file that was reserved with `reserved` bytes, adjust the counter to `actual`.
 async fn settle_file_reservation(
     state: &Arc<AppState>,
@@ -234,12 +258,23 @@ async fn login(
     let ip = client_ip(&headers, Some(addr), state.config.trust_proxy);
     let window = Duration::from_secs(15 * 60);
     let ip_key = format!("login:ip:{ip}");
-    let user_key = format!("login:user:{}", body.username);
+    // Cap the rate-limit key — never store unbounded attacker-controlled strings.
+    let user_label = if tavern_core::valid_username(&body.username) {
+        body.username.trim().to_string()
+    } else {
+        "_invalid_".into()
+    };
+    let user_key = format!("login:user:{user_label}");
     // Peek only — successful sign-ins must not burn the budget.
     if state.limiter.is_limited(&ip_key, 10, window)
         || state.limiter.is_limited(&user_key, 8, window)
     {
         return Err(ApiError::limited());
+    }
+    if body.password.len() > tavern_db::Db::MAX_PASSWORD_LEN {
+        state.limiter.hit(&ip_key, window);
+        state.limiter.hit(&user_key, window);
+        return Err(ApiError::unauthorized("invalid credentials"));
     }
     let hash = state
         .db
@@ -882,11 +917,26 @@ async fn update_project(
     Json(body): Json<UpdateProjectBody>,
 ) -> Result<Json<ProjectView>, ApiError> {
     let role = require_edit(&state, &user, id).await?;
+    ensure_title(&body.title)?;
     let theme = body.theme_json.unwrap_or_else(tavern_core::default_theme);
-    let p = state
+    if json_bytes(&theme) > MAX_THEME_BYTES {
+        return Err(ApiError::bad("theme too large (max 64KB)"));
+    }
+    let owner = project_owner_id(&state, id).await?;
+    let add = (body.title.len() + body.synopsis.len() + json_bytes(&theme)) as u64;
+    reserve_owner_quota(&state, owner, add.max(1)).await?;
+    let p = match state
         .db
         .update_project(id, &body.title, &body.synopsis, &theme)
-        .await?;
+        .await
+    {
+        Ok(p) => p,
+        Err(e) => {
+            let _ = state.db.release_storage(owner, add.max(1)).await;
+            return Err(e.into());
+        }
+    };
+    let _ = state.db.mark_storage_dirty(owner).await;
     let wrap = state.db.get_project_key_wrap(id, user.id).await?;
     Ok(Json(with_wrap(p, role, wrap)))
 }
@@ -1097,6 +1147,9 @@ async fn create_element(
     Json(body): Json<CreateElementBody>,
 ) -> Result<(StatusCode, Json<Element>), ApiError> {
     require_edit(&state, &user, id).await?;
+    ensure_title(&body.title)?;
+    let meta = body.metadata.clone().unwrap_or_else(|| serde_json::json!({}));
+    ensure_meta_size(&meta)?;
     let module =
         ModuleType::parse(&body.module_type).ok_or(ApiError::bad("invalid module_type"))?;
     if let Some(parent) = body.parent_id {
@@ -1104,19 +1157,27 @@ async fn create_element(
             return Err(ApiError::bad("parent is not in this project"));
         }
     }
-    let el = state
+    let owner = project_owner_id(&state, id).await?;
+    let add = (body.title.len() + json_bytes(&meta)) as u64;
+    reserve_owner_quota(&state, owner, add.max(1)).await?;
+    let el = match state
         .db
         .create_element(
             id,
             module,
             &body.title,
             body.parent_id,
-            body.metadata.unwrap_or_else(|| serde_json::json!({})),
+            meta,
             body.apply_template.unwrap_or(true),
         )
-        .await?;
-    let owner = project_owner_id(&state, id).await?;
-    let _ = state.db.mark_storage_dirty(owner).await;
+        .await
+    {
+        Ok(el) => el,
+        Err(e) => {
+            let _ = state.db.release_storage(owner, add.max(1)).await;
+            return Err(e.into());
+        }
+    };
     Ok((StatusCode::CREATED, Json(el)))
 }
 
@@ -1145,21 +1206,41 @@ async fn update_element(
 ) -> Result<Json<Element>, ApiError> {
     let el = visible_element(&state, &user, id).await?;
     require_edit(&state, &user, el.project_id).await?;
+    ensure_title(&body.title)?;
+    ensure_meta_size(&body.metadata)?;
     if let Some(parent) = body.parent_id {
         if !state.db.element_in_project(parent, el.project_id).await? {
             return Err(ApiError::bad("parent is not in this project"));
         }
     }
-    let updated = state
+    let owner = project_owner_id(&state, el.project_id).await?;
+    let old = (el.title.len() + json_bytes(&el.metadata)) as u64;
+    let new = (body.title.len() + json_bytes(&body.metadata)) as u64;
+    if new > old {
+        reserve_owner_quota(&state, owner, new - old).await?;
+    }
+    let updated = match state
         .db
         .update_element(
             id,
             &body.title,
             body.parent_id,
             body.sort_order,
-            body.metadata,
+            body.metadata.clone(),
         )
-        .await?;
+        .await
+    {
+        Ok(u) => u,
+        Err(e) => {
+            if new > old {
+                let _ = state.db.release_storage(owner, new - old).await;
+            }
+            return Err(e.into());
+        }
+    };
+    if old > new {
+        let _ = state.db.release_storage(owner, old - new).await;
+    }
     // Keep manuscript [[Module:Title]] tokens in sync when a linked element is renamed.
     if el.title != body.title {
         let _ = state
@@ -1177,7 +1258,9 @@ async fn delete_element(
 ) -> Result<StatusCode, ApiError> {
     let el = visible_element(&state, &user, id).await?;
     require_edit(&state, &user, el.project_id).await?;
+    let owner = project_owner_id(&state, el.project_id).await?;
     state.db.delete_element(id).await?;
+    let _ = state.db.mark_storage_dirty(owner).await;
     Ok(StatusCode::NO_CONTENT)
 }
 
@@ -1278,12 +1361,20 @@ async fn create_panel(
 ) -> Result<(StatusCode, Json<tavern_core::Panel>), ApiError> {
     let el = visible_element_for_page(&state, &user, id).await?;
     require_edit(&state, &user, el.project_id).await?;
+    ensure_title(&body.title)?;
+    let content = body.content.clone().unwrap_or_else(|| serde_json::json!({}));
+    if json_bytes(&content) > MAX_PANEL_CONTENT_BYTES {
+        return Err(ApiError::bad("panel content too large (max 1MB)"));
+    }
     let ptype = PanelType::parse(&body.panel_type).ok_or(ApiError::bad("invalid panel_type"))?;
     let sort = body.sort_order.unwrap_or(0);
     let layout = body
         .layout
         .unwrap_or_else(|| default_panel_layout_for(ptype.as_str(), sort as usize));
-    let panel = state
+    let owner = project_owner_id(&state, el.project_id).await?;
+    let add = (body.title.len() + json_bytes(&content)) as u64;
+    reserve_owner_quota(&state, owner, add.max(1)).await?;
+    let panel = match state
         .db
         .create_panel(
             id,
@@ -1291,12 +1382,17 @@ async fn create_panel(
             &body.title,
             body.border_color.as_deref(),
             layout,
-            body.content.unwrap_or_else(|| serde_json::json!({})),
+            content,
             sort,
         )
-        .await?;
-    let owner = project_owner_id(&state, el.project_id).await?;
-    let _ = state.db.mark_storage_dirty(owner).await;
+        .await
+    {
+        Ok(p) => p,
+        Err(e) => {
+            let _ = state.db.release_storage(owner, add.max(1)).await;
+            return Err(e.into());
+        }
+    };
     Ok((StatusCode::CREATED, Json(panel)))
 }
 
@@ -1317,7 +1413,20 @@ async fn update_panel(
 ) -> Result<Json<tavern_core::Panel>, ApiError> {
     let el = visible_element_for_panel(&state, &user, id).await?;
     require_edit(&state, &user, el.project_id).await?;
-    let panel = state
+    ensure_title(&body.title)?;
+    if json_bytes(&body.content) > MAX_PANEL_CONTENT_BYTES {
+        return Err(ApiError::bad("panel content too large (max 1MB)"));
+    }
+    let Some(prev) = state.db.get_panel(id).await? else {
+        return Err(ApiError::not_found("panel"));
+    };
+    let owner = project_owner_id(&state, el.project_id).await?;
+    let old = (prev.title.len() + json_bytes(&prev.content)) as u64;
+    let new = (body.title.len() + json_bytes(&body.content)) as u64;
+    if new > old {
+        reserve_owner_quota(&state, owner, new - old).await?;
+    }
+    let panel = match state
         .db
         .update_panel(
             id,
@@ -1327,9 +1436,19 @@ async fn update_panel(
             body.content,
             body.sort_order,
         )
-        .await?;
-    let owner = project_owner_id(&state, el.project_id).await?;
-    let _ = state.db.mark_storage_dirty(owner).await;
+        .await
+    {
+        Ok(p) => p,
+        Err(e) => {
+            if new > old {
+                let _ = state.db.release_storage(owner, new - old).await;
+            }
+            return Err(e.into());
+        }
+    };
+    if old > new {
+        let _ = state.db.release_storage(owner, old - new).await;
+    }
     Ok(Json(panel))
 }
 
@@ -1524,7 +1643,12 @@ async fn save_template(
     if let Some(pid) = body.project_id {
         require_access(&state, &user, pid).await?;
     }
-    let t = state
+    let pages_len = json_bytes(&body.pages_json);
+    if pages_len > MAX_TEMPLATE_BYTES {
+        return Err(ApiError::bad("template too large (max 1MB)"));
+    }
+    reserve_owner_quota(&state, user.id, pages_len as u64).await?;
+    let t = match state
         .db
         .save_template(
             user.id,
@@ -1534,7 +1658,14 @@ async fn save_template(
             body.description.as_deref().unwrap_or(""),
             body.pages_json,
         )
-        .await?;
+        .await
+    {
+        Ok(t) => t,
+        Err(e) => {
+            let _ = state.db.release_storage(user.id, pages_len as u64).await;
+            return Err(e.into());
+        }
+    };
     Ok((StatusCode::CREATED, Json(t)))
 }
 

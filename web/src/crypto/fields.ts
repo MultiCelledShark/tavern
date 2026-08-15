@@ -30,8 +30,7 @@ export async function sealText(projectId: string | undefined, s: string): Promis
   if (key) return encryptText(key, s);
   const mode = projectId ? projectCryptoMode(projectId) : undefined;
   if (mode === "plaintext") return s;
-  // No vault and no mode yet (legacy / never opened): leave plaintext.
-  if (!getVault() && mode === undefined) return s;
+  // Fail closed when mode is unknown — never guess plaintext into an encrypted project.
   sealDenied(projectId);
 }
 
@@ -53,10 +52,8 @@ export async function sealMeta(
   if (key) return { e: await encryptJson(key, meta) };
   const mode = projectId ? projectCryptoMode(projectId) : undefined;
   if (mode === "plaintext") return meta;
-  if (!getVault() && mode === undefined) return meta;
-  // Empty meta on plaintext-adjacent paths
-  if (!meta || Object.keys(meta).length === 0) {
-    if (mode === "encrypted" || mode === "locked" || getVault()) sealDenied(projectId);
+  // Empty meta with no vault yet (pre-unlock bootstrap) may pass; otherwise fail closed.
+  if ((!meta || Object.keys(meta).length === 0) && mode === undefined && !getVault()) {
     return meta;
   }
   sealDenied(projectId);

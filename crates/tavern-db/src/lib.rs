@@ -51,6 +51,7 @@ impl Db {
     }
 
     pub const MIN_PASSWORD_LEN: usize = 12;
+    pub const MAX_PASSWORD_LEN: usize = 256;
 
     pub async fn ensure_admin(
         &self,
@@ -92,6 +93,12 @@ impl Db {
             return Err(anyhow!(
                 "password must be at least {} characters",
                 Self::MIN_PASSWORD_LEN
+            ));
+        }
+        if password.len() > Self::MAX_PASSWORD_LEN {
+            return Err(anyhow!(
+                "password must be at most {} characters",
+                Self::MAX_PASSWORD_LEN
             ));
         }
         Ok(())
@@ -511,6 +518,15 @@ impl Db {
             .fetch_one(&self.pool)
             .await?;
         Ok(row.get::<i64, _>("used_bytes").max(0) as u64)
+    }
+
+    pub async fn storage_updated_at(&self, user_id: Uuid) -> Result<Option<String>> {
+        self.ensure_storage_row(user_id).await?;
+        let row = sqlx::query("SELECT updated_at FROM user_storage WHERE user_id = $1")
+            .bind(user_id.to_string())
+            .fetch_one(&self.pool)
+            .await?;
+        Ok(row.try_get::<String, _>("updated_at").ok())
     }
 
     pub async fn set_storage_used(&self, user_id: Uuid, used: u64) -> Result<()> {
@@ -1235,6 +1251,17 @@ impl Db {
         .fetch_all(&self.pool)
         .await?;
         Ok(rows.into_iter().map(map_panel).collect())
+    }
+
+    pub async fn get_panel(&self, id: Uuid) -> Result<Option<Panel>> {
+        let row = sqlx::query(
+            "SELECT id, page_id, panel_type, title, border_color, layout_json, content_json, sort_order
+             FROM panels WHERE id = $1",
+        )
+        .bind(id.to_string())
+        .fetch_optional(&self.pool)
+        .await?;
+        Ok(row.map(map_panel))
     }
 
     pub async fn update_panel(
