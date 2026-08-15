@@ -5,6 +5,7 @@ pub mod routes;
 mod security;
 mod session_cache;
 pub mod state;
+mod storage;
 
 use anyhow::Result;
 use axum::extract::DefaultBodyLimit;
@@ -47,6 +48,18 @@ pub async fn build_state(config: Config) -> Result<Arc<AppState>> {
     }
     let mailer = crate::mail::Mailer::from_config(&config);
     let dummy_password_hash = Db::hash_password("tavern-timing-dummy-not-a-login")?;
+    if config.trust_proxy {
+        let loopback = config.listen.starts_with("127.0.0.1")
+            || config.listen.starts_with("localhost")
+            || config.listen.starts_with("[::1]");
+        if !loopback {
+            tracing::warn!(
+                listen = %config.listen,
+                "TAVERN_TRUST_PROXY is enabled but the process is not listening on loopback — \
+                 clients that can reach this port may spoof X-Forwarded-For / X-Real-IP"
+            );
+        }
+    }
     Ok(Arc::new(AppState {
         db,
         config,

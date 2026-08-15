@@ -59,7 +59,11 @@ impl Db {
             if let Some(new_pass) = force_password {
                 Self::validate_password_strength(new_pass)?;
                 self.set_password(u.id, new_pass).await?;
-                tracing::info!(user = %username, "admin password rotated via TAVERN_ADMIN_PASS_FORCE");
+                self.delete_sessions_for_user(u.id).await?;
+                tracing::info!(
+                    user = %username,
+                    "admin password rotated via TAVERN_ADMIN_PASS_FORCE; sessions invalidated"
+                );
                 return self
                     .get_user(u.id)
                     .await?
@@ -470,6 +474,17 @@ impl Db {
         Ok(())
     }
 
+    pub async fn list_owned_project_ids(&self, owner_id: Uuid) -> Result<Vec<Uuid>> {
+        let rows = sqlx::query("SELECT id FROM projects WHERE owner_id = $1")
+            .bind(owner_id.to_string())
+            .fetch_all(&self.pool)
+            .await?;
+        Ok(rows
+            .into_iter()
+            .map(|r| Uuid::parse_str(r.get::<String, _>("id").as_str()).unwrap())
+            .collect())
+    }
+
     pub async fn project_access(&self, user: &User, project_id: Uuid) -> Result<Option<GrantRole>> {
         let row = sqlx::query("SELECT owner_id FROM projects WHERE id = $1")
             .bind(project_id.to_string())
@@ -722,32 +737,26 @@ impl Db {
         token: &str,
     ) -> Result<Option<(Uuid, GrantRole, Option<String>)>> {
         let token_hash = Self::hash_secret(token);
+        let now = Utc::now();
         let row = sqlx::query(
-            "SELECT id, project_id, role, expires_at, used_at, key_wrap FROM project_invites WHERE token_hash = $1",
+            "UPDATE project_invites SET used_at = $1
+             WHERE token_hash = $2
+               AND used_at IS NULL
+               AND expires_at >= $3
+             RETURNING project_id, role, key_wrap",
         )
+        .bind(now.to_rfc3339())
         .bind(&token_hash)
+        .bind(now.to_rfc3339())
         .fetch_optional(&self.pool)
         .await?;
         let Some(r) = row else {
             return Ok(None);
         };
-        if r.get::<Option<String>, _>("used_at").is_some() {
-            return Ok(None);
-        }
-        let expires = parse_dt(r.get::<String, _>("expires_at"));
-        if expires < Utc::now() {
-            return Ok(None);
-        }
-        let invite_id: String = r.get("id");
         let project_id = Uuid::parse_str(r.get::<String, _>("project_id").as_str()).unwrap();
         let role =
             GrantRole::parse_shareable(&r.get::<String, _>("role")).unwrap_or(GrantRole::Viewer);
         let key_wrap = r.get::<Option<String>, _>("key_wrap");
-        sqlx::query("UPDATE project_invites SET used_at = $1 WHERE id = $2")
-            .bind(Utc::now().to_rfc3339())
-            .bind(&invite_id)
-            .execute(&self.pool)
-            .await?;
         Ok(Some((project_id, role, key_wrap)))
     }
 

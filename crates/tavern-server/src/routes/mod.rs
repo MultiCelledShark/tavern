@@ -24,6 +24,34 @@ use crate::auth::{AdminUser, AuthUser};
 use crate::security::client_ip;
 use crate::state::AppState;
 
+async fn ensure_owner_quota(
+    state: &Arc<AppState>,
+    owner_id: Uuid,
+    additional: u64,
+) -> Result<(), ApiError> {
+    let used = crate::storage::owned_storage_bytes(state, owner_id)
+        .await
+        .map_err(|e| ApiError::bad(&e.to_string()))?;
+    let quota = state.config.user_quota_bytes;
+    if used.saturating_add(additional) > quota {
+        return Err(ApiError::bad(&format!(
+            "storage quota exceeded ({} of {} used). Delete projects or assets to free space.",
+            crate::storage::format_bytes(used),
+            crate::storage::format_bytes(quota),
+        )));
+    }
+    Ok(())
+}
+
+async fn project_owner_id(state: &Arc<AppState>, project_id: Uuid) -> Result<Uuid, ApiError> {
+    Ok(state
+        .db
+        .get_project(project_id)
+        .await?
+        .ok_or(ApiError::not_found("project"))?
+        .owner_id)
+}
+
 #[derive(Embed)]
 #[folder = "../../web/dist/"]
 struct Assets;
@@ -35,6 +63,7 @@ pub fn router() -> Router<Arc<AppState>> {
         .route("/api/auth/logout", post(logout))
         .route("/api/auth/me", get(me))
         .route("/api/auth/config", get(auth_config))
+        .route("/api/auth/storage", get(storage_usage))
         .route("/api/auth/signup", post(signup))
         .route("/api/auth/verify", post(verify_email))
         .route("/api/auth/resend", post(resend_verify))
@@ -192,12 +221,33 @@ async fn logout(
     }
     let mut cookie = Cookie::new("tavern_session", "");
     cookie.set_path("/");
+    cookie.set_http_only(true);
+    cookie.set_same_site(SameSite::Lax);
+    if state.config.cookie_secure || state.config.trust_proxy {
+        cookie.set_secure(true);
+    }
     cookie.make_removal();
     Ok((jar.add(cookie), StatusCode::NO_CONTENT))
 }
 
 async fn me(AuthUser(user): AuthUser) -> Json<User> {
     Json(user)
+}
+
+async fn storage_usage(
+    AuthUser(user): AuthUser,
+    State(state): State<Arc<AppState>>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    let used = crate::storage::owned_storage_bytes(&state, user.id)
+        .await
+        .map_err(|e| ApiError::bad(&e.to_string()))?;
+    let quota = state.config.user_quota_bytes;
+    Ok(Json(serde_json::json!({
+        "used_bytes": used,
+        "quota_bytes": quota,
+        "used": crate::storage::format_bytes(used),
+        "quota": crate::storage::format_bytes(quota),
+    })))
 }
 
 async fn auth_config(State(state): State<Arc<AppState>>) -> Json<serde_json::Value> {
@@ -405,6 +455,19 @@ async fn reset_password(
     if let Some(crypto) = body.crypto_json.as_ref() {
         let raw = crypto.to_string();
         validate_crypto_json(&raw)?;
+        if let Some(existing) = state.db.get_crypto_json(user_id).await? {
+            let old: serde_json::Value = serde_json::from_str(&existing)
+                .map_err(|_| ApiError::bad("stored vault envelope is corrupt"))?;
+            let new: serde_json::Value = serde_json::from_str(&raw)
+                .map_err(|_| ApiError::bad("invalid vault envelope"))?;
+            let old_pub = old.get("pub").and_then(|x| x.as_str());
+            let new_pub = new.get("pub").and_then(|x| x.as_str());
+            if old_pub.is_none() || old_pub != new_pub {
+                return Err(ApiError::bad(
+                    "vault recovery does not match this account",
+                ));
+            }
+        }
         state.db.set_crypto_json(user_id, &raw).await?;
     }
     state.db.set_password(user_id, &body.password).await?;
@@ -682,6 +745,7 @@ async fn create_tutorial_project(
     AuthUser(user): AuthUser,
     State(state): State<Arc<AppState>>,
 ) -> Result<(StatusCode, Json<serde_json::Value>), ApiError> {
+    ensure_owner_quota(&state, user.id, 0).await?;
     const TUTORIAL: &str = include_str!("../../../../samples/tutorial_project.json");
     let (intermediate, report) =
         tavern_import::load_bytes(TUTORIAL.as_bytes(), Some("tutorial_project.json"))?;
@@ -735,6 +799,16 @@ async fn delete_project(
 ) -> Result<StatusCode, ApiError> {
     require_manage(&state, &user, id).await?;
     state.db.delete_project(id).await?;
+    let assets = state.config.project_assets_dir(id);
+    let exports = state.config.project_exports_dir(id);
+    let imports = state.config.data_dir.join("imports").join(id.to_string());
+    for dir in [assets, exports, imports] {
+        if dir.exists() {
+            if let Err(e) = std::fs::remove_dir_all(&dir) {
+                tracing::warn!(?dir, error = %e, "failed to remove project files on delete");
+            }
+        }
+    }
     Ok(StatusCode::NO_CONTENT)
 }
 
@@ -1361,6 +1435,7 @@ async fn export_project(
             "this project is encrypted; export from the browser",
         ));
     }
+    let owner = project_owner_id(&state, id).await?;
     let project = state
         .db
         .get_project(id)
@@ -1407,7 +1482,10 @@ async fn export_project(
         compile_manuscript_markdown(&project.title, &bodies)
     };
 
-    let out_dir = state.config.data_dir.join("exports").join(id.to_string());
+    // Soft estimate: pandoc output is usually near markdown size (docx/epub can be larger).
+    ensure_owner_quota(&state, owner, (markdown.len() as u64).saturating_mul(2)).await?;
+
+    let out_dir = state.config.project_exports_dir(id);
     let filename = format!(
         "{}-{}.{}",
         sanitize(&project.title),
@@ -1417,6 +1495,10 @@ async fn export_project(
     let out_path = out_dir.join(&filename);
     write_with_pandoc(&markdown, &out_path, format)?;
     let bytes = std::fs::read(&out_path)?;
+    if let Err(e) = ensure_owner_quota(&state, owner, 0).await {
+        let _ = std::fs::remove_file(&out_path);
+        return Err(e);
+    }
     Ok((
         [
             (header::CONTENT_TYPE, content_type_for(format)),
@@ -1441,6 +1523,8 @@ async fn backup_project(
             "this project is encrypted; backup from the browser (downloads recoverable JSON)",
         ));
     }
+    let owner = project_owner_id(&state, id).await?;
+    ensure_owner_quota(&state, owner, 0).await?;
     let project = state
         .db
         .get_project(id)
@@ -1473,11 +1557,15 @@ async fn backup_project(
         &id_to_title,
     );
     let assets = state.config.project_assets_dir(id);
-    let out_dir = state.config.data_dir.join("exports").join(id.to_string());
+    let out_dir = state.config.project_exports_dir(id);
     std::fs::create_dir_all(&out_dir)?;
     let out = out_dir.join(format!("{}.tavern", sanitize(&project.title)));
     write_tavern_backup(&out, &intermediate, Some(&assets))?;
     let bytes = std::fs::read(&out)?;
+    if let Err(e) = ensure_owner_quota(&state, owner, 0).await {
+        let _ = std::fs::remove_file(&out);
+        return Err(e);
+    }
     let filename = format!("{}.tavern", sanitize(&project.title));
     Ok((
         [
@@ -1574,6 +1662,8 @@ async fn upload_asset(
         if bytes.len() > 12 * 1024 * 1024 {
             return Err(ApiError::bad("file too large (max 12MB)"));
         }
+        let owner = project_owner_id(&state, id).await?;
+        ensure_owner_quota(&state, owner, bytes.len() as u64).await?;
         let path = dir.join(&name);
         std::fs::write(&path, &bytes)?;
         stored = Some(AssetInfo {
@@ -1676,6 +1766,7 @@ async fn import_project(
     if bytes.len() > 32 * 1024 * 1024 {
         return Err(ApiError::bad("import too large (max 32MB)"));
     }
+    ensure_owner_quota(&state, user.id, bytes.len() as u64).await?;
     let (intermediate, report) = tavern_import::load_bytes(&bytes, filename.as_deref())?;
     let prepared = tavern_import::prepare(intermediate, report)?;
     materialize_import(&state, user.id, prepared).await

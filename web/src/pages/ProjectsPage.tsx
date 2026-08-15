@@ -17,9 +17,12 @@ export default function ProjectsPage({
   const [importNote, setImportNote] = useState<string | null>(null);
   const [busyTutorial, setBusyTutorial] = useState(false);
   const [busyImport, setBusyImport] = useState(false);
+  const [storage, setStorage] = useState<{ used: string; quota: string } | null>(null);
 
   async function refresh() {
-    setProjects(await api.projects());
+    const [list, usage] = await Promise.all([api.projects(), api.storage().catch(() => null)]);
+    setProjects(list);
+    if (usage) setStorage({ used: usage.used, quota: usage.quota });
   }
 
   useEffect(() => {
@@ -101,6 +104,11 @@ export default function ProjectsPage({
           Manuscripts, characters, lore, and systems — linked together. Hover any control for a
           short tip.
         </p>
+        {storage && (
+          <p className="muted" style={{ marginTop: "0.35rem" }}>
+            Storage: {storage.used} / {storage.quota}
+          </p>
+        )}
 
         <form className="row" onSubmit={create} style={{ marginTop: "1.25rem" }}>
           <input

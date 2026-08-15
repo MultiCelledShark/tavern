@@ -22,12 +22,14 @@ pub struct Config {
     pub smtp_from: String,
     /// `starttls` | `tls` | `off`
     pub smtp_security: String,
+    /// Soft cap on owned project assets + exports on disk (default 10 GiB).
+    pub user_quota_bytes: u64,
 }
 
 impl Default for Config {
     fn default() -> Self {
         Self {
-            listen: "0.0.0.0:8084".into(),
+            listen: "127.0.0.1:8084".into(),
             data_dir: PathBuf::from("./data"),
             database_url: "postgres://tavern:tavern@127.0.0.1:5432/tavern".into(),
             admin_username: "tavern_admin".into(),
@@ -43,6 +45,7 @@ impl Default for Config {
             smtp_pass: None,
             smtp_from: "tavern@localhost".into(),
             smtp_security: "starttls".into(),
+            user_quota_bytes: 10 * 1024 * 1024 * 1024,
         }
     }
 }
@@ -96,6 +99,15 @@ impl Config {
         if let Ok(v) = std::env::var("TAVERN_SMTP_SECURITY") {
             c.smtp_security = v.to_ascii_lowercase();
         }
+        if let Ok(v) = std::env::var("TAVERN_USER_QUOTA_GB") {
+            if let Ok(gb) = v.parse::<u64>() {
+                c.user_quota_bytes = gb.saturating_mul(1024 * 1024 * 1024);
+            }
+        } else if let Ok(v) = std::env::var("TAVERN_USER_QUOTA_BYTES") {
+            if let Ok(b) = v.parse::<u64>() {
+                c.user_quota_bytes = b;
+            }
+        }
         c
     }
 
@@ -112,6 +124,10 @@ impl Config {
             .join("projects")
             .join(project_id.to_string())
             .join("assets")
+    }
+
+    pub fn project_exports_dir(&self, project_id: Uuid) -> PathBuf {
+        self.data_dir.join("exports").join(project_id.to_string())
     }
 }
 

@@ -251,6 +251,10 @@ async function putOwnWrap(projectId: string, projectKey: CryptoKey) {
 export const api = {
   me: () => req<User>("/api/auth/me"),
   authConfig: () => req<{ signup: boolean }>("/api/auth/config"),
+  storage: () =>
+    req<{ used_bytes: number; quota_bytes: number; used: string; quota: string }>(
+      "/api/auth/storage"
+    ),
   login: (username: string, password: string) =>
     req<{ user: User; vault?: VaultEnvelope | null }>("/api/auth/login", {
       method: "POST",
@@ -565,7 +569,23 @@ export const api = {
     });
     const key = getProjectKey(projectId);
     const vault = getVault();
-    if (!key || !vault || !body.username) return;
+    const encrypted = projectCryptoMode(projectId) === "encrypted" || !!key;
+    if (!body.username) {
+      if (encrypted) {
+        throw new Error(
+          "Encrypted projects need a username so the project key can be wrapped for them."
+        );
+      }
+      return;
+    }
+    if (!key || !vault) {
+      if (encrypted) {
+        throw new Error(
+          "Unlock this project before granting access so the key can be shared."
+        );
+      }
+      return;
+    }
     try {
       const { pub } = await api.cryptoPubkey(body.username);
       const wrap = await wrapProjectKey(key, vault.privateKey, vault.publicRaw, unb64(pub));
@@ -573,8 +593,11 @@ export const api = {
         method: "PUT",
         body: JSON.stringify({ wrap, username: body.username }),
       });
-    } catch {
-      /* no vault on that user, or unknown username */
+    } catch (err) {
+      const detail = err instanceof Error ? err.message : "unknown error";
+      throw new Error(
+        `Access was granted, but the project key could not be wrapped for “${body.username}” (${detail}). They need a vault — have them sign in once, then grant again.`
+      );
     }
   },
   deleteGrant: (projectId: string, userId: string) =>

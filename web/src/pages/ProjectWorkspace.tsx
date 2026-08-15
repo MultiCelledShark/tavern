@@ -753,16 +753,24 @@ export default function ProjectWorkspace({
               type="button"
               data-tip={TIPS.grant}
               onClick={async () => {
-                await api.upsertGrant(projectId, { username: grantUser.trim(), role: grantRole });
-                setGrantUser("");
-                setGrants(await api.grants(projectId));
+                setError(null);
+                try {
+                  await api.upsertGrant(projectId, {
+                    username: grantUser.trim(),
+                    role: grantRole,
+                  });
+                  setGrantUser("");
+                  setGrants(await api.grants(projectId));
+                } catch (err) {
+                  setError(err instanceof Error ? err.message : "Grant failed");
+                }
               }}
             >
               Grant access
             </button>
             <p className="muted" style={{ fontSize: "0.8rem" }}>
-              If that account exists, they now have access. No confirmation either way. Encrypted
-              projects need their vault — grant again after they’ve signed in once.
+              They’ll get access if the username exists. Encrypted projects also wrap the project
+              key — they need to have signed in once (vault ready), or grant again after they do.
             </p>
             <button
               type="button"
