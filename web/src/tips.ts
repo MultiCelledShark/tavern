@@ -10,7 +10,7 @@ export const TIPS = {
   collapsePanel: "Hide this panel — reopen from the top bar toggles",
   exportMd: "Download the manuscript as Markdown",
   exportDocx: "Download the manuscript as DOCX (needs pandoc on the server)",
-  backup: "Download a full .tavern project backup zip",
+  backup: "Download a project backup (.tavern zip, or recoverable JSON when encrypted)",
   logout: "End this session",
   moduleManuscript: "Chapters and scenes — manuscript editor, corkboard, word goals",
   moduleCharacter: "People and creatures — panel canvases for bios and traits",
@@ -74,8 +74,10 @@ export const TIPS = {
   wikiTip: "In manuscript text, link with [[Character:Name]] or similar",
   bible: "Export worldbuilding notes as a Markdown bible",
   createProject: "Start a blank project",
-  importProject: "Import Campfire HTML export, .tavern backup, or intermediate JSON",
-  tutorial: "Load a guided sample covering every module — safe to delete later",
+  importProject:
+    "Import Campfire HTML, .tavern backup, or JSON — sealed with your vault when unlocked",
+  tutorial:
+    "Load a guided sample covering every module — encrypted with your vault, safe to delete later",
   openProject: "Open this project workspace",
   deleteProject: "Permanently delete this project and its data",
   loginUser: "Account username",

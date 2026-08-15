@@ -237,6 +237,16 @@ impl Db {
         Ok(row.map(|r| r.get("wrap")))
     }
 
+    pub async fn project_has_key_wrap(&self, project_id: Uuid) -> Result<bool> {
+        let row = sqlx::query(
+            "SELECT 1 AS ok FROM project_key_wraps WHERE project_id = $1 LIMIT 1",
+        )
+        .bind(project_id.to_string())
+        .fetch_optional(&self.pool)
+        .await?;
+        Ok(row.is_some())
+    }
+
     pub async fn set_invite_key_wrap(
         &self,
         project_id: Uuid,

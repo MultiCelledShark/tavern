@@ -8,8 +8,11 @@ import {
 
 const STORE = "tavern_vault_v1";
 
+export type ProjectCryptoMode = "encrypted" | "plaintext" | "locked";
+
 let current: UnlockedVault | null = null;
 const projectKeys = new Map<string, CryptoKey>();
+const projectModes = new Map<string, ProjectCryptoMode>();
 const elemProject = new Map<string, string>();
 const pageProject = new Map<string, string>();
 const panelPage = new Map<string, string>();
@@ -23,10 +26,29 @@ export function setVault(v: UnlockedVault | null) {
   current = v;
   if (!v) {
     projectKeys.clear();
+    projectModes.clear();
     sessionStorage.removeItem(STORE);
     return;
   }
   persist(v).catch(() => undefined);
+}
+
+export function projectCryptoMode(projectId: string): ProjectCryptoMode | undefined {
+  return projectModes.get(projectId);
+}
+
+export function markProjectEncrypted(projectId: string) {
+  projectModes.set(projectId, "encrypted");
+}
+
+export function markProjectPlaintext(projectId: string) {
+  projectModes.set(projectId, "plaintext");
+  projectKeys.delete(projectId);
+}
+
+export function markProjectLocked(projectId: string) {
+  projectModes.set(projectId, "locked");
+  projectKeys.delete(projectId);
 }
 
 export function rememberElementProject(elementId: string, projectId: string) {
@@ -55,6 +77,7 @@ export function pageForPanel(panelId: string): string | undefined {
 
 export function setProjectKey(projectId: string, key: CryptoKey) {
   projectKeys.set(projectId, key);
+  projectModes.set(projectId, "encrypted");
 }
 
 export function getProjectKey(projectId: string): CryptoKey | undefined {
@@ -129,4 +152,5 @@ export function clearVault() {
   elemProject.clear();
   pageProject.clear();
   panelPage.clear();
+  projectModes.clear();
 }

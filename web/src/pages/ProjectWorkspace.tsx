@@ -381,8 +381,8 @@ export default function ProjectWorkspace({
                 type="button"
                 data-tip={TIPS.backup}
                 onClick={async () => {
-                  const blob = await api.backupProject(projectId);
-                  await download(blob, `${project?.title || "project"}.tavern`);
+                  const { blob, filename } = await api.backupProject(projectId);
+                  await download(blob, filename);
                 }}
               >
                 Backup

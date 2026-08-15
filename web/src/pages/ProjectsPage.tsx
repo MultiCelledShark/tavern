@@ -16,6 +16,7 @@ export default function ProjectsPage({
   const [error, setError] = useState<string | null>(null);
   const [importNote, setImportNote] = useState<string | null>(null);
   const [busyTutorial, setBusyTutorial] = useState(false);
+  const [busyImport, setBusyImport] = useState(false);
 
   async function refresh() {
     setProjects(await api.projects());
@@ -36,14 +37,20 @@ export default function ProjectsPage({
   async function onImport(file: File | null) {
     if (!file) return;
     setImportNote(null);
+    setError(null);
+    setBusyImport(true);
     try {
       const res = await api.importProject(file);
       setImportNote(
-        `Imported “${res.project.title}”. Notes: ${res.report.notes.join(" ")}`
+        `Imported “${res.project.title}”.${
+          res.project.key_wrap ? " Sealed with your vault." : ""
+        } Notes: ${res.report.notes.join(" ")}`
       );
       await refresh();
     } catch (err) {
       setError(err instanceof Error ? err.message : "Import failed");
+    } finally {
+      setBusyImport(false);
     }
   }
 
@@ -53,7 +60,9 @@ export default function ProjectsPage({
     try {
       const res = await api.createTutorial();
       setImportNote(
-        `Loaded “${res.project.title}”. Open Encyclopedia → Welcome — start here.`
+        `Loaded “${res.project.title}”.${
+          res.project.key_wrap ? " Sealed with your vault." : ""
+        } Open Encyclopedia → Welcome — start here.`
       );
       await refresh();
       navigate(`/project/${res.project.id}`);
@@ -115,10 +124,11 @@ export default function ProjectsPage({
 
         <div className="row" style={{ marginTop: "0.85rem" }}>
           <label className="muted" data-tip={TIPS.importProject}>
-            Import Campfire / `.tavern` / JSON{" "}
+            {busyImport ? "Importing & sealing…" : "Import Campfire / `.tavern` / JSON"}{" "}
             <input
               type="file"
               accept=".json,.zip,.tavern,.camp,.html,*"
+              disabled={busyImport || busyTutorial}
               onChange={(e) => onImport(e.target.files?.[0] || null)}
             />
           </label>

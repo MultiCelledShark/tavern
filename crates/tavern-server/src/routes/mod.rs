@@ -1436,6 +1436,11 @@ async fn backup_project(
     Path(id): Path<Uuid>,
 ) -> Result<Response, ApiError> {
     require_edit(&state, &user, id).await?;
+    if state.db.project_has_key_wrap(id).await? {
+        return Err(ApiError::bad(
+            "this project is encrypted; backup from the browser (downloads recoverable JSON)",
+        ));
+    }
     let project = state
         .db
         .get_project(id)

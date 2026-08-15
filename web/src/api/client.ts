@@ -2,6 +2,7 @@ import {
   decryptAsset,
   encryptAsset,
   encryptText,
+  isEncryptedText,
   newProjectKey,
   unb64,
   unwrapProjectKey,
@@ -15,7 +16,10 @@ import {
   cachedBlobUrl,
   getProjectKey,
   getVault,
+  markProjectLocked,
+  markProjectPlaintext,
   pageForPanel,
+  projectCryptoMode,
   projectForElement,
   projectForPage,
   rememberElementProject,
@@ -177,6 +181,9 @@ async function req<T>(path: string, init?: RequestInit): Promise<T> {
 
 async function openProject(p: Project): Promise<Project> {
   const vault = getVault();
+  const looksEncrypted =
+    !!p.key_wrap || isEncryptedText(p.title) || isEncryptedText(p.synopsis || "");
+
   if (p.key_wrap && vault) {
     try {
       const key = getProjectKey(p.id) || (await unwrapProjectKey(p.key_wrap, vault.privateKey));
@@ -187,9 +194,17 @@ async function openProject(p: Project): Promise<Project> {
         synopsis: await openText(p.id, p.synopsis),
       };
     } catch {
+      markProjectLocked(p.id);
       return { ...p, title: "Locked project", synopsis: "" };
     }
   }
+
+  if (looksEncrypted) {
+    markProjectLocked(p.id);
+    return { ...p, title: "Locked project", synopsis: "" };
+  }
+
+  markProjectPlaintext(p.id);
   return p;
 }
 
@@ -295,6 +310,8 @@ export const api = {
     if (key) {
       setProjectKey(p.id, key);
       await putOwnWrap(p.id, key);
+    } else {
+      markProjectPlaintext(p.id);
     }
     return { ...p, title, synopsis };
   },
@@ -380,6 +397,24 @@ export const api = {
     });
     return openPage(page, projectId);
   },
+  updatePage: async (
+    id: string,
+    body: { title: string; description: string; sort_order: number },
+    projectId?: string
+  ) => {
+    const pid = projectId || projectForPage(id);
+    if (!pid) throw new Error("Missing project context for page update");
+    rememberPageProject(id, pid);
+    const page = await req<Page>(`/api/pages/${id}`, {
+      method: "PUT",
+      body: JSON.stringify({
+        title: await sealText(pid, body.title),
+        description: await sealText(pid, body.description),
+        sort_order: body.sort_order,
+      }),
+    });
+    return openPage(page, pid);
+  },
   panels: async (pageId: string) => {
     const rows = await req<Panel[]>(`/api/pages/${pageId}/panels`);
     const projectId = projectForPage(pageId);
@@ -391,6 +426,9 @@ export const api = {
     body: { panel_type: string; title: string; content?: object; layout?: PanelLayout; sort_order?: number }
   ) => {
     const projectId = projectForPage(pageId);
+    if (!projectId && getVault()) {
+      throw new Error("Missing project context — reload the page and try again.");
+    }
     const panel = await req<Panel>(`/api/pages/${pageId}/panels`, {
       method: "POST",
       body: JSON.stringify({
@@ -413,6 +451,9 @@ export const api = {
   ) => {
     const pageId = pageForPanel(id);
     const projectId = pageId ? projectForPage(pageId) : undefined;
+    if (!projectId && getVault()) {
+      throw new Error("Missing project context — reload the page and try again.");
+    }
     const updated = await req<Panel>(`/api/panels/${id}`, {
       method: "PUT",
       body: JSON.stringify({
@@ -541,6 +582,17 @@ export const api = {
   listAssets: (projectId: string) => req<AssetInfo[]>(`/api/projects/${projectId}/assets`),
   uploadAsset: async (projectId: string, file: File) => {
     const key = getProjectKey(projectId);
+    if (!key) {
+      const mode = projectCryptoMode(projectId);
+      if (mode === "encrypted" || mode === "locked") {
+        throw new Error(
+          "This project is locked or missing its key — unlock before uploading images."
+        );
+      }
+      if (getVault() && mode !== "plaintext") {
+        throw new Error("Missing project key — refusing to upload an unencrypted asset.");
+      }
+    }
     let blob: Blob = file;
     if (key) {
       blob = await encryptAsset(key, await file.arrayBuffer());
@@ -586,12 +638,33 @@ export const api = {
     return res.blob();
   },
   backupProject: async (projectId: string) => {
+    const project = await api.getProject(projectId);
+    const base = (project.title || "project").replace(/[^\w\-]+/g, "_").slice(0, 80) || "project";
+    // Encrypted projects: download decrypted intermediate JSON so restore works after re-import.
+    if (getProjectKey(projectId)) {
+      const data = await compileLocalIntermediate(projectId);
+      return {
+        blob: new Blob([JSON.stringify(data, null, 2)], {
+          type: "application/json;charset=utf-8",
+        }),
+        filename: `${base}.tavern.json`,
+      };
+    }
     const res = await fetch(`/api/projects/${projectId}/backup`, {
       method: "POST",
       credentials: "include",
     });
-    if (!res.ok) throw new Error("backup failed");
-    return res.blob();
+    if (!res.ok) {
+      let msg = "backup failed";
+      try {
+        const j = await res.json();
+        msg = j.error || msg;
+      } catch {
+        /* ignore */
+      }
+      throw new Error(msg);
+    }
+    return { blob: await res.blob(), filename: `${base}.tavern` };
   },
   importProject: async (file: File) => {
     const fd = new FormData();
@@ -600,16 +673,151 @@ export const api = {
       project: Project;
       report: { notes: string[]; unsupported_modules: string[] };
     }>("/api/import", { method: "POST", body: fd, headers: {} });
-    return { ...res, project: await openProject(res.project) };
+    const project = await ensureProjectEncrypted(res.project.id);
+    return { ...res, project };
   },
   createTutorial: async () => {
     const res = await req<{ project: Project; report: { notes: string[] } }>(
       "/api/projects/tutorial",
       { method: "POST", body: "{}" }
     );
-    return { ...res, project: await openProject(res.project) };
+    const project = await ensureProjectEncrypted(res.project.id);
+    return { ...res, project };
   },
 };
+
+async function ensureProjectEncrypted(projectId: string): Promise<Project> {
+  const vault = getVault();
+  const raw = await req<Project>(`/api/projects/${projectId}`);
+  if (!vault) {
+    markProjectPlaintext(projectId);
+    return raw;
+  }
+  if (raw.key_wrap || getProjectKey(projectId)) {
+    return openProject(raw);
+  }
+
+  // Server wrote plaintext (import/tutorial). Seal in place, then wrap the project key.
+  const key = await newProjectKey();
+  setProjectKey(projectId, key);
+
+  await api.updateProject(projectId, {
+    title: raw.title,
+    synopsis: raw.synopsis,
+    theme_json: raw.theme_json,
+  });
+
+  const elements = await req<Element[]>(`/api/projects/${projectId}/elements`);
+  for (const el of elements) {
+    rememberElementProject(el.id, projectId);
+    await api.updateElement(el.id, {
+      title: el.title,
+      parent_id: el.parent_id,
+      sort_order: el.sort_order,
+      metadata: (el.metadata || {}) as Record<string, unknown>,
+    });
+
+    if (el.module_type === "manuscript") {
+      const body = await req<ManuscriptBody>(`/api/elements/${el.id}/manuscript`);
+      await api.saveManuscript(el.id, body.markdown, body.word_goal, body.updated_at);
+    }
+
+    const pages = await req<Page[]>(`/api/elements/${el.id}/pages`);
+    for (const page of pages) {
+      rememberPageProject(page.id, projectId);
+      await api.updatePage(
+        page.id,
+        {
+          title: page.title,
+          description: page.description || "",
+          sort_order: page.sort_order,
+        },
+        projectId
+      );
+      const panels = await req<Panel[]>(`/api/pages/${page.id}/panels`);
+      for (const panel of panels) {
+        rememberPanelPage(panel.id, page.id);
+        await api.updatePanel(panel.id, {
+          title: panel.title,
+          border_color: panel.border_color,
+          layout: panel.layout,
+          content: (panel.content || {}) as Record<string, unknown>,
+          sort_order: panel.sort_order,
+        });
+      }
+    }
+  }
+
+  const links = await req<ElementLink[]>(`/api/projects/${projectId}/links`);
+  for (const link of links) {
+    await api.deleteLink(link.id);
+    await api.createLink(projectId, {
+      from_element_id: link.from_element_id,
+      to_element_id: link.to_element_id,
+      label: link.label,
+      link_type: link.link_type,
+    });
+  }
+
+  await putOwnWrap(projectId, key);
+  return openProject(await req<Project>(`/api/projects/${projectId}`));
+}
+
+async function compileLocalIntermediate(projectId: string) {
+  const project = await api.getProject(projectId);
+  const elements = await api.elements(projectId);
+  const links = await api.links(projectId);
+  const idToTitle = new Map(elements.map((e) => [e.id, e.title]));
+  const outElements = [];
+  for (const el of elements.sort((a, b) => a.sort_order - b.sort_order)) {
+    let body_markdown: string | null = null;
+    const panels: {
+      panel_type: string;
+      title: string;
+      content: Record<string, unknown>;
+      layout: PanelLayout;
+      page_title?: string;
+    }[] = [];
+    if (el.module_type === "manuscript") {
+      const body = await api.manuscript(el.id);
+      body_markdown = body.markdown;
+    } else {
+      const pages = await api.pages(el.id);
+      for (const page of pages) {
+        const pagePanels = await api.panels(page.id);
+        for (const panel of pagePanels) {
+          panels.push({
+            panel_type: panel.panel_type,
+            title: panel.title,
+            content: panel.content,
+            layout: panel.layout,
+            page_title: page.title,
+          });
+        }
+      }
+    }
+    outElements.push({
+      module_type: el.module_type,
+      title: el.title,
+      parent_title: el.parent_id ? idToTitle.get(el.parent_id) || null : null,
+      metadata: el.metadata,
+      body_markdown,
+      panels,
+      unsupported_source: null,
+    });
+  }
+  return {
+    title: project.title,
+    synopsis: project.synopsis,
+    elements: outElements,
+    links: links.map((l) => ({
+      from_title: idToTitle.get(l.from_element_id) || "",
+      to_title: idToTitle.get(l.to_element_id) || "",
+      label: l.label,
+      link_type: l.link_type,
+    })),
+  };
+}
 
 function rewriteWikiText(
   text: string,
