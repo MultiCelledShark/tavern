@@ -17,6 +17,7 @@ const elemProject = new Map<string, string>();
 const pageProject = new Map<string, string>();
 const panelPage = new Map<string, string>();
 const blobUrls = new Map<string, string>();
+let pagehideBound = false;
 
 export function getVault(): UnlockedVault | null {
   return current;
@@ -27,10 +28,30 @@ export function setVault(v: UnlockedVault | null) {
   if (!v) {
     projectKeys.clear();
     projectModes.clear();
-    sessionStorage.removeItem(STORE);
+    try {
+      sessionStorage.removeItem(STORE);
+    } catch {
+      /* ignore */
+    }
     return;
   }
-  persist(v).catch(() => undefined);
+  // Keep raw key material out of sessionStorage while the tab is active.
+  try {
+    sessionStorage.removeItem(STORE);
+  } catch {
+    /* ignore */
+  }
+  ensurePagehidePersist();
+}
+
+function ensurePagehidePersist() {
+  if (pagehideBound || typeof window === "undefined") return;
+  pagehideBound = true;
+  window.addEventListener("pagehide", () => {
+    if (current) {
+      void flushPersist(current);
+    }
+  });
 }
 
 export function projectCryptoMode(projectId: string): ProjectCryptoMode | undefined {
@@ -92,23 +113,42 @@ export function cachedBlobUrl(key: string): string | undefined {
   return blobUrls.get(key);
 }
 
-async function persist(v: UnlockedVault) {
-  const vaultRaw = new Uint8Array(await crypto.subtle.exportKey("raw", v.vaultKey));
-  const priv = new Uint8Array(await crypto.subtle.exportKey("pkcs8", v.privateKey));
-  sessionStorage.setItem(
-    STORE,
-    JSON.stringify({
-      userId: v.userId,
-      vault: b64(vaultRaw),
-      priv: b64(priv),
-      pub: b64(v.publicRaw),
-    })
-  );
+/** Flush vault material for the next cold load only (pagehide / refresh). */
+async function flushPersist(v: UnlockedVault) {
+  try {
+    const vaultRaw = new Uint8Array(await crypto.subtle.exportKey("raw", v.vaultKey));
+    const priv = new Uint8Array(await crypto.subtle.exportKey("pkcs8", v.privateKey));
+    sessionStorage.setItem(
+      STORE,
+      JSON.stringify({
+        userId: v.userId,
+        vault: b64(vaultRaw),
+        priv: b64(priv),
+        pub: b64(v.publicRaw),
+      })
+    );
+  } catch {
+    /* ignore — keys may be non-extractable */
+  }
 }
 
+/**
+ * Restore from a prior pagehide flush, then wipe sessionStorage so active-tab
+ * XSS cannot read the stash from storage (keys stay in memory only).
+ */
 export async function restoreVault(userId: string): Promise<UnlockedVault | null> {
-  const raw = sessionStorage.getItem(STORE);
+  let raw: string | null = null;
+  try {
+    raw = sessionStorage.getItem(STORE);
+  } catch {
+    return null;
+  }
   if (!raw) return null;
+  try {
+    sessionStorage.removeItem(STORE);
+  } catch {
+    /* ignore */
+  }
   try {
     const j = JSON.parse(raw) as { userId: string; vault: string; priv: string; pub: string };
     if (j.userId !== userId) return null;
@@ -127,9 +167,9 @@ export async function restoreVault(userId: string): Promise<UnlockedVault | null
       ["deriveBits"]
     );
     current = { userId, vaultKey, privateKey, publicRaw: unb64(j.pub) };
+    ensurePagehidePersist();
     return current;
   } catch {
-    sessionStorage.removeItem(STORE);
     return null;
   }
 }

@@ -35,24 +35,23 @@ export default function InvitePage({ user }: { user: User | null }) {
   const [token, setToken] = useState("");
   const [error, setError] = useState<string | null>(null);
 
-  // Resolve token from fragment, legacy path, or sessionStorage — never put it in ?next=.
+  // Fragment or sessionStorage only — path tokens hit proxy access logs.
   useEffect(() => {
+    if (path.startsWith("/invite/")) {
+      setError("This invite link format is no longer supported. Ask for a fresh invite link.");
+      navigate("/invite", { replace: true });
+      setToken("");
+      return;
+    }
     let t = "";
     if (hash) {
       t = hash;
-    } else if (path.startsWith("/invite/")) {
-      try {
-        t = decodeURIComponent(path.slice("/invite/".length));
-      } catch {
-        t = "";
-      }
     } else {
       t = readStowedInvite();
     }
     if (t) {
       stowInvite(t);
-      // Scrub secret from the address bar (path and fragment both end up in history/logs).
-      if (path !== "/invite" || hash) {
+      if (hash) {
         navigate("/invite", { replace: true });
       }
     }
@@ -73,7 +72,6 @@ export default function InvitePage({ user }: { user: User | null }) {
   }, [user, token, navigate]);
 
   if (!user) {
-    // Token stays in sessionStorage only — query string must stay log-safe.
     return <Navigate to="/login?next=%2Finvite" replace />;
   }
 

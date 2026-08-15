@@ -416,7 +416,7 @@ async fn signup(
         .await?
         .is_some()
     {
-        return Err(ApiError::bad("username taken"));
+        return Err(ApiError::bad("could not create account"));
     }
     if let Some(existing) = state.db.get_user_by_email(&email).await? {
         if existing.email_verified {

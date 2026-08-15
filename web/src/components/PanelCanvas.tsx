@@ -715,15 +715,24 @@ function ImagePanelEditor({
               type="button"
               data-tip={TIPS.addImageUrl}
               onClick={() => {
-                const url = prompt("Image URL");
+                const url = prompt("Same-origin asset path (e.g. /api/projects/…/assets/…)");
                 if (!url) return;
+                const trimmed = url.trim();
+                const allowed =
+                  trimmed.startsWith(`/api/projects/${projectId}/assets/`) &&
+                  !trimmed.includes("..") &&
+                  !trimmed.includes("\\");
+                if (!allowed) {
+                  alert("Only uploaded project asset URLs are allowed (no external https).");
+                  return;
+                }
                 void commit({
                   ...content,
-                  images: [...images, { url, caption: "" }],
+                  images: [...images, { url: trimmed, caption: "" }],
                 });
               }}
             >
-              Add URL
+              Add asset path
             </button>
           </div>
         )}

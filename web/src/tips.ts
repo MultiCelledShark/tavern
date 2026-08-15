@@ -91,7 +91,7 @@ export const TIPS = {
   timelineLabel: "Human-readable label shown on the timeline rail",
   timelineEvent: "Select this event to edit its panels and date",
   uploadImage: "Upload an image into this project's asset library",
-  addImageUrl: "Attach an external image URL to this panel",
+  addImageUrl: "Attach an already-uploaded project asset by its /api/…/assets/ path",
 } as const;
 
 export type TipKey = keyof typeof TIPS;

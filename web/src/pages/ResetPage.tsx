@@ -1,17 +1,24 @@
-import { FormEvent, useMemo, useState } from "react";
+import { FormEvent, useEffect, useMemo, useState } from "react";
 import { api } from "../api/client";
 import { parseEnvelope, rewrapVaultPassword, unlockWithRecovery } from "../crypto/vault";
-import { Link, useHash, useSearchParams } from "../lib/router";
+import { Link, useHash, useNavigate, useSearchParams } from "../lib/router";
 
 export default function ResetPage() {
   const [params] = useSearchParams();
   const hash = useHash();
-  const token = useMemo(() => hash || params.get("token") || "", [hash, params]);
+  const navigate = useNavigate();
+  const queryToken = params.get("token") || "";
+  const token = useMemo(() => hash || "", [hash]);
   const [password, setPassword] = useState("");
   const [recoveryKey, setRecoveryKey] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [done, setDone] = useState(false);
   const [busy, setBusy] = useState(false);
+
+  useEffect(() => {
+    if (!queryToken || hash) return;
+    navigate(`/reset#${encodeURIComponent(queryToken)}`, { replace: true });
+  }, [queryToken, hash, navigate]);
 
   async function submit(e: FormEvent) {
     e.preventDefault();
@@ -48,7 +55,7 @@ export default function ResetPage() {
       <div className="login-card">
         <div className="brand">Tavern</div>
         <h1>New password</h1>
-        {!token ? (
+        {!token && !queryToken ? (
           <p className="error">Missing reset token. Use the link from your email.</p>
         ) : done ? (
           <>
@@ -57,6 +64,8 @@ export default function ResetPage() {
               <Link to="/login">Sign in</Link>
             </p>
           </>
+        ) : !token ? (
+          <p className="muted">Preparing reset…</p>
         ) : (
           <form onSubmit={submit}>
             <p>

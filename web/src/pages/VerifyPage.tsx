@@ -1,16 +1,25 @@
 import { useEffect, useMemo, useState } from "react";
 import { api } from "../api/client";
-import { Link, useHash, useSearchParams } from "../lib/router";
+import { Link, useHash, useNavigate, useSearchParams } from "../lib/router";
 
 export default function VerifyPage() {
   const [params] = useSearchParams();
   const hash = useHash();
-  const token = useMemo(() => hash || params.get("token") || "", [hash, params]);
+  const navigate = useNavigate();
+  const queryToken = params.get("token") || "";
+  const token = useMemo(() => hash || "", [hash]);
   const [status, setStatus] = useState<"working" | "ok" | "bad">("working");
   const [message, setMessage] = useState("Confirming your email…");
 
+  // Legacy ?token= → move into the fragment and scrub the query (proxy logs).
+  useEffect(() => {
+    if (!queryToken || hash) return;
+    navigate(`/verify#${encodeURIComponent(queryToken)}`, { replace: true });
+  }, [queryToken, hash, navigate]);
+
   useEffect(() => {
     if (!token) {
+      if (queryToken) return; // wait for hash scrub
       setStatus("bad");
       setMessage("Missing verification token. Use the link from your email.");
       return;
@@ -25,7 +34,7 @@ export default function VerifyPage() {
         setStatus("bad");
         setMessage(err instanceof Error ? err.message : "Verification failed");
       });
-  }, [token]);
+  }, [token, queryToken]);
 
   return (
     <div className="login-page">
