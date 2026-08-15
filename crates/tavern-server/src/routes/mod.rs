@@ -151,7 +151,6 @@ pub fn router() -> Router<Arc<AppState>> {
         )
         .route("/api/users", get(list_users).post(create_user))
         .route("/api/projects", get(list_projects).post(create_project))
-        .route("/api/projects/tutorial", post(create_tutorial_project))
         .route(
             "/api/projects/{id}",
             get(get_project).put(update_project).delete(delete_project),
@@ -204,11 +203,7 @@ pub fn router() -> Router<Arc<AppState>> {
             "/api/projects/{id}/assets",
             get(list_assets).post(upload_asset),
         )
-        .route(
-            "/api/projects/{id}/assets/{name}",
-            get(get_asset).delete(delete_asset),
-        )
-        .route("/api/import", post(import_project))
+        .route("/api/projects/{id}/assets/{name}", get(get_asset).delete(delete_asset))
         .route("/api/modules", get(list_modules))
         .route("/", get(index))
         .route("/assets/{*path}", get(static_asset))
@@ -856,29 +851,6 @@ async fn create_project(
         }
     };
     Ok((StatusCode::CREATED, Json(with_role(p, GrantRole::Owner))))
-}
-
-async fn create_tutorial_project(
-    AuthUser(user): AuthUser,
-    State(state): State<Arc<AppState>>,
-) -> Result<Json<serde_json::Value>, ApiError> {
-    // Parse only — browser materializes with sealed writes when a vault is unlocked.
-    reserve_owner_quota(&state, user.id, 0).await?;
-    const TUTORIAL: &str = include_str!("../../../../samples/tutorial_project.json");
-    let (intermediate, report) =
-        tavern_import::load_bytes(TUTORIAL.as_bytes(), Some("tutorial_project.json"))?;
-    let prepared = tavern_import::prepare(intermediate, report)?;
-    Ok(Json(serde_json::json!({
-        "intermediate": prepared.project,
-        "report": {
-            "format": prepared.report.format,
-            "title": prepared.report.title,
-            "element_count": prepared.report.element_count,
-            "link_count": prepared.report.link_count,
-            "unsupported_modules": prepared.report.unsupported_modules,
-            "notes": prepared.report.notes
-        }
-    })))
 }
 
 async fn get_project(
@@ -1905,57 +1877,6 @@ async fn delete_asset(
         let _ = state.db.release_storage(owner, size).await;
     }
     Ok(StatusCode::NO_CONTENT)
-}
-
-async fn import_project(
-    AuthUser(user): AuthUser,
-    State(state): State<Arc<AppState>>,
-    mut multipart: Multipart,
-) -> Result<Json<serde_json::Value>, ApiError> {
-    let mut bytes = None;
-    let mut filename = None;
-    while let Some(field) = multipart
-        .next_field()
-        .await
-        .map_err(|e| ApiError::bad(&e.to_string()))?
-    {
-        if field.name() == Some("file") {
-            filename = field.file_name().map(|s| s.to_string());
-            bytes = Some(
-                field
-                    .bytes()
-                    .await
-                    .map_err(|e| ApiError::bad(&e.to_string()))?
-                    .to_vec(),
-            );
-        }
-    }
-    if !state.limiter.check(
-        &format!("import:{}", user.id),
-        10,
-        Duration::from_secs(60 * 60),
-    ) {
-        return Err(ApiError::limited());
-    }
-    let bytes = bytes.ok_or(ApiError::bad("file required"))?;
-    if bytes.len() > 32 * 1024 * 1024 {
-        return Err(ApiError::bad("import too large (max 32MB)"));
-    }
-    // Parse only — do not persist plaintext. Client seals while materializing.
-    reserve_owner_quota(&state, user.id, 0).await?;
-    let (intermediate, report) = tavern_import::load_bytes(&bytes, filename.as_deref())?;
-    let prepared = tavern_import::prepare(intermediate, report)?;
-    Ok(Json(serde_json::json!({
-        "intermediate": prepared.project,
-        "report": {
-            "format": prepared.report.format,
-            "title": prepared.report.title,
-            "element_count": prepared.report.element_count,
-            "link_count": prepared.report.link_count,
-            "unsupported_modules": prepared.report.unsupported_modules,
-            "notes": prepared.report.notes
-        }
-    })))
 }
 
 async fn list_modules() -> Json<serde_json::Value> {

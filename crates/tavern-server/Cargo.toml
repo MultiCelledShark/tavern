@@ -21,7 +21,6 @@ cookie = { workspace = true }
 chrono = { workspace = true }
 tavern-core = { workspace = true }
 tavern-db = { workspace = true }
-tavern-import = { workspace = true }
 tavern-export = { workspace = true }
 rust-embed = { workspace = true }
 serde = { workspace = true }

@@ -2306,7 +2306,6 @@ dependencies = [
  "tavern-core",
  "tavern-db",
  "tavern-export",
- "tavern-import",
  "tokio",
  "tokio-util",
  "tower-http",

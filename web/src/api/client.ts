@@ -700,20 +700,17 @@ export const api = {
     return { blob: await res.blob(), filename: `${base}.tavern` };
   },
   importProject: async (file: File) => {
-    const fd = new FormData();
-    fd.append("file", file);
-    const res = await req<{
-      intermediate: IntermediateProject;
-      report: ImportReport;
-    }>("/api/import", { method: "POST", body: fd, headers: {} });
-    return materializeIntermediate(res.intermediate, res.report);
+    const { parseImportFile } = await import("../import/parse");
+    const parsed = await parseImportFile(file);
+    return materializeIntermediate(parsed.intermediate, parsed.report);
   },
   createTutorial: async () => {
-    const res = await req<{ intermediate: IntermediateProject; report: ImportReport }>(
-      "/api/projects/tutorial",
-      { method: "POST", body: "{}" }
-    );
-    return materializeIntermediate(res.intermediate, res.report);
+    const { parseImportBytes } = await import("../import/parse");
+    const tutorial = (await import("../samples/tutorial_project.json")).default;
+    const text = JSON.stringify(tutorial);
+    const bytes = new TextEncoder().encode(text);
+    const parsed = parseImportBytes(bytes, "tutorial_project.json");
+    return materializeIntermediate(parsed.intermediate, parsed.report);
   },
 };
 
@@ -735,11 +732,18 @@ export type IntermediateElement = {
   unsupported_source?: string | null;
 };
 
+export type IntermediateLink = {
+  from_title: string;
+  to_title: string;
+  label: string;
+  link_type: string;
+};
+
 export type IntermediateProject = {
   title: string;
   synopsis: string;
   elements: IntermediateElement[];
-  links: { from_title: string; to_title: string; label: string; link_type: string }[];
+  links: IntermediateLink[];
 };
 
 export type ImportReport = {
