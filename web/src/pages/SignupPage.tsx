@@ -1,8 +1,16 @@
 import { FormEvent, useState } from "react";
 import { api } from "../api/client";
 import RecoveryKey from "../components/RecoveryKey";
-import { createVault, vaultCryptoAvailable } from "../crypto/vault";
+import { createVault, type VaultEnvelope, vaultCryptoAvailable } from "../crypto/vault";
 import { Link } from "../lib/router";
+
+type PendingSignup = {
+  username: string;
+  email: string;
+  password: string;
+  envelope: VaultEnvelope;
+  recoveryKey: string;
+};
 
 export default function SignupPage() {
   const [username, setUsername] = useState("");
@@ -11,7 +19,7 @@ export default function SignupPage() {
   const [error, setError] = useState<string | null>(null);
   const [done, setDone] = useState(false);
   const [busy, setBusy] = useState(false);
-  const [recoveryKey, setRecoveryKey] = useState<string | null>(null);
+  const [pending, setPending] = useState<PendingSignup | null>(null);
   const cryptoOk = vaultCryptoAvailable();
 
   async function submit(e: FormEvent) {
@@ -19,14 +27,15 @@ export default function SignupPage() {
     setBusy(true);
     setError(null);
     try {
+      // Create the vault locally first; only register after the recovery key is saved.
       const { envelope, recoveryKey: rk } = await createVault(password);
-      await api.signup({
+      setPending({
         username: username.trim(),
         email: email.trim(),
         password,
-        crypto_json: envelope,
+        envelope,
+        recoveryKey: rk,
       });
-      setRecoveryKey(rk);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Sign up failed");
     } finally {
@@ -39,12 +48,20 @@ export default function SignupPage() {
       <div className="login-card">
         <div className="brand">Tavern</div>
         <h1>Take a seat</h1>
-        {recoveryKey && !done ? (
+        {pending && !done ? (
           <>
             <h2 style={{ fontSize: "1.2rem", marginTop: 0 }}>Save your recovery key</h2>
             <RecoveryKey
-              recoveryKey={recoveryKey}
-              onContinue={() => setDone(true)}
+              recoveryKey={pending.recoveryKey}
+              onContinue={async () => {
+                await api.signup({
+                  username: pending.username,
+                  email: pending.email,
+                  password: pending.password,
+                  crypto_json: pending.envelope,
+                });
+                setDone(true);
+              }}
               continueLabel="I’ve saved it — continue"
             />
           </>

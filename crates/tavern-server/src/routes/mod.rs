@@ -136,14 +136,12 @@ async fn login(
     Json(body): Json<LoginBody>,
 ) -> Result<(CookieJar, Json<serde_json::Value>), ApiError> {
     let ip = client_ip(&headers, Some(addr), state.config.trust_proxy);
-    if !state
-        .limiter
-        .check(&format!("login:ip:{ip}"), 10, Duration::from_secs(15 * 60))
-        || !state.limiter.check(
-            &format!("login:user:{}", body.username),
-            8,
-            Duration::from_secs(15 * 60),
-        )
+    let window = Duration::from_secs(15 * 60);
+    let ip_key = format!("login:ip:{ip}");
+    let user_key = format!("login:user:{}", body.username);
+    // Peek only — successful sign-ins must not burn the budget.
+    if state.limiter.is_limited(&ip_key, 10, window)
+        || state.limiter.is_limited(&user_key, 8, window)
     {
         return Err(ApiError::limited());
     }
@@ -155,6 +153,8 @@ async fn login(
     let password_ok = tavern_db::Db::verify_password(&body.password, &hash)?;
     let user = state.db.get_user_by_username(&body.username).await?;
     if !password_ok || user.is_none() {
+        state.limiter.hit(&ip_key, window);
+        state.limiter.hit(&user_key, window);
         return Err(ApiError::unauthorized("invalid credentials"));
     }
     let user = user.unwrap();

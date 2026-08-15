@@ -4,10 +4,18 @@ import RecoveryKey from "../components/RecoveryKey";
 import {
   createVault,
   parseEnvelope,
+  type UnlockedVault,
+  type VaultEnvelope,
   unlockWithPassword,
   vaultCryptoAvailable,
 } from "../crypto/vault";
 import { setVault } from "../crypto/session";
+
+type PendingVault = {
+  envelope: VaultEnvelope;
+  unlocked: UnlockedVault;
+  recoveryKey: string;
+};
 
 export default function UnlockPage({
   user,
@@ -21,7 +29,7 @@ export default function UnlockPage({
   const [password, setPassword] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
-  const [recoveryKey, setRecoveryKey] = useState<string | null>(null);
+  const [pending, setPending] = useState<PendingVault | null>(null);
 
   const needsSetup = !user.has_vault;
   const cryptoOk = vaultCryptoAvailable();
@@ -32,10 +40,13 @@ export default function UnlockPage({
     setError(null);
     try {
       if (needsSetup) {
+        // Defer putVault / session persist until the recovery key is acknowledged.
         const { envelope, recoveryKey: rk, unlocked } = await createVault(password);
-        await api.putVault(envelope);
-        setVault({ userId: user.id, ...unlocked });
-        setRecoveryKey(rk);
+        setPending({
+          envelope,
+          unlocked: { userId: user.id, ...unlocked },
+          recoveryKey: rk,
+        });
         return;
       }
       const { vault } = await api.getVault();
@@ -59,13 +70,20 @@ export default function UnlockPage({
     }
   }
 
-  if (recoveryKey) {
+  if (pending) {
     return (
       <div className="login-page">
         <div className="login-card">
           <div className="brand">Tavern</div>
           <h1>Save your recovery key</h1>
-          <RecoveryKey recoveryKey={recoveryKey} onContinue={onReady} />
+          <RecoveryKey
+            recoveryKey={pending.recoveryKey}
+            onContinue={async () => {
+              await api.putVault(pending.envelope);
+              setVault(pending.unlocked);
+              onReady();
+            }}
+          />
         </div>
       </div>
     );

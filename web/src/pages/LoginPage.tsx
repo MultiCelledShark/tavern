@@ -1,10 +1,23 @@
 import { FormEvent, useEffect, useState } from "react";
 import { api, User } from "../api/client";
 import RecoveryKey from "../components/RecoveryKey";
-import { createVault, parseEnvelope, vaultCryptoAvailable } from "../crypto/vault";
+import {
+  createVault,
+  parseEnvelope,
+  type UnlockedVault,
+  type VaultEnvelope,
+  vaultCryptoAvailable,
+} from "../crypto/vault";
 import { setVault, unlockEnvelope } from "../crypto/session";
 import { Link } from "../lib/router";
 import { TIPS } from "../tips";
+
+type PendingVault = {
+  user: User;
+  envelope: VaultEnvelope;
+  unlocked: UnlockedVault;
+  recoveryKey: string;
+};
 
 export default function LoginPage({ onLogin }: { onLogin: (u: User) => void }) {
   const [username, setUsername] = useState("");
@@ -12,8 +25,7 @@ export default function LoginPage({ onLogin }: { onLogin: (u: User) => void }) {
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [signup, setSignup] = useState(false);
-  const [recoveryKey, setRecoveryKey] = useState<string | null>(null);
-  const [pendingUser, setPendingUser] = useState<User | null>(null);
+  const [pending, setPending] = useState<PendingVault | null>(null);
   const cryptoOk = vaultCryptoAvailable();
 
   useEffect(() => {
@@ -36,11 +48,14 @@ export default function LoginPage({ onLogin }: { onLogin: (u: User) => void }) {
         setError("Vault on this account is unreadable. Writing cannot be unlocked from here.");
         return;
       }
+      // Defer putVault / session persist until the recovery key is acknowledged.
       const { envelope: created, recoveryKey: rk, unlocked } = await createVault(password);
-      await api.putVault(created);
-      setVault({ userId: res.user.id, ...unlocked });
-      setPendingUser({ ...res.user, has_vault: true });
-      setRecoveryKey(rk);
+      setPending({
+        user: { ...res.user, has_vault: true },
+        envelope: created,
+        unlocked: { userId: res.user.id, ...unlocked },
+        recoveryKey: rk,
+      });
     } catch (err) {
       setError(err instanceof Error ? err.message : "Login failed");
     } finally {
@@ -48,15 +63,19 @@ export default function LoginPage({ onLogin }: { onLogin: (u: User) => void }) {
     }
   }
 
-  if (recoveryKey && pendingUser) {
+  if (pending) {
     return (
       <div className="login-page">
         <div className="login-card">
           <div className="brand">Tavern</div>
           <h1>Save your recovery key</h1>
           <RecoveryKey
-            recoveryKey={recoveryKey}
-            onContinue={() => onLogin(pendingUser)}
+            recoveryKey={pending.recoveryKey}
+            onContinue={async () => {
+              await api.putVault(pending.envelope);
+              setVault(pending.unlocked);
+              onLogin(pending.user);
+            }}
           />
         </div>
       </div>
