@@ -107,11 +107,50 @@ fn looks_like_json(bytes: &[u8]) -> bool {
 }
 
 fn load_zip(bytes: &[u8], filename: Option<&str>) -> Result<(IntermediateProject, ImportReport)> {
-    const MAX_ENTRY: u64 = 32 * 1024 * 1024;
+    /// Per-entry uncompressed cap (also enforced while reading).
+    const MAX_ENTRY: u64 = 16 * 1024 * 1024;
+    /// Total uncompressed bytes across all entries we actually read.
+    const MAX_TOTAL_UNCOMPRESSED: u64 = 64 * 1024 * 1024;
+    const MAX_ENTRIES: usize = 512;
+    const MAX_JSON_ENTRIES: usize = 64;
+
     let cursor = Cursor::new(bytes);
     let mut archive = zip::ZipArchive::new(cursor).context("open zip backup")?;
+    if archive.len() > MAX_ENTRIES {
+        anyhow::bail!(
+            "zip has too many entries (max {MAX_ENTRIES}; got {})",
+            archive.len()
+        );
+    }
     let mut notes = vec![format!("ZIP archive with {} entries", archive.len())];
     let mut unsupported = Vec::new();
+    let mut total_uncompressed = 0u64;
+
+    fn read_limited(
+        f: &mut (impl Read + ?Sized),
+        declared: u64,
+        max_entry: u64,
+        total: &mut u64,
+        max_total: u64,
+    ) -> Result<String> {
+        if declared > max_entry {
+            anyhow::bail!("zip entry too large");
+        }
+        if total.saturating_add(declared) > max_total {
+            anyhow::bail!("zip uncompressed size exceeds limit");
+        }
+        let mut limited = f.take(max_entry.saturating_add(1));
+        let mut buf = Vec::new();
+        limited.read_to_end(&mut buf).context("read zip entry")?;
+        if buf.len() as u64 > max_entry {
+            anyhow::bail!("zip entry too large");
+        }
+        *total = total.saturating_add(buf.len() as u64);
+        if *total > max_total {
+            anyhow::bail!("zip uncompressed size exceeds limit");
+        }
+        String::from_utf8(buf).context("zip entry is not UTF-8")
+    }
 
     // Prefer known intermediate / manifest names
     for candidate in [
@@ -122,11 +161,17 @@ fn load_zip(bytes: &[u8], filename: Option<&str>) -> Result<(IntermediateProject
         "export.json",
     ] {
         if let Ok(mut f) = archive.by_name(candidate) {
-            if f.size() > MAX_ENTRY {
-                anyhow::bail!("zip entry {candidate} too large");
-            }
-            let mut buf = String::new();
-            f.read_to_string(&mut buf)?;
+            let declared = f.size();
+            let buf = match read_limited(
+                &mut f,
+                declared,
+                MAX_ENTRY,
+                &mut total_uncompressed,
+                MAX_TOTAL_UNCOMPRESSED,
+            ) {
+                Ok(b) => b,
+                Err(e) => anyhow::bail!("{candidate}: {e}"),
+            };
             if let Ok(project) = serde_json::from_str::<IntermediateProject>(&buf) {
                 notes.push(format!("Parsed {candidate} as intermediate project"));
                 let report = ImportReport {
@@ -168,27 +213,39 @@ fn load_zip(bytes: &[u8], filename: Option<&str>) -> Result<(IntermediateProject
         links: vec![],
     };
 
+    let mut json_seen = 0usize;
     for name in &names {
         if !name.ends_with(".json") {
             continue;
         }
+        json_seen += 1;
+        if json_seen > MAX_JSON_ENTRIES {
+            notes.push(format!("Stopped after {MAX_JSON_ENTRIES} JSON entries"));
+            break;
+        }
         let Ok(mut f) = archive.by_name(name) else {
             continue;
         };
-        if f.size() > MAX_ENTRY {
-            notes.push(format!("Skipped oversized entry {name}"));
+        let declared = f.size();
+        let Ok(buf) = read_limited(
+            &mut f,
+            declared,
+            MAX_ENTRY,
+            &mut total_uncompressed,
+            MAX_TOTAL_UNCOMPRESSED,
+        ) else {
+            notes.push(format!("Skipped oversized or invalid entry {name}"));
             continue;
-        }
-        let mut buf = String::new();
-        if f.read_to_string(&mut buf).is_err() {
-            continue;
-        }
+        };
         if let Ok(v) = serde_json::from_str::<Value>(&buf) {
             let (partial, unsup) = map_generic_json(v, Some(name));
             harvested.elements.extend(partial.elements);
             harvested.links.extend(partial.links);
             unsupported.extend(unsup);
             notes.push(format!("Mapped JSON from {name}"));
+            if harvested.elements.len() > 5_000 {
+                anyhow::bail!("imported project has too many elements");
+            }
         }
     }
 
@@ -471,6 +528,12 @@ pub struct PreparedImport {
 pub fn prepare(project: IntermediateProject, report: ImportReport) -> Result<PreparedImport> {
     if project.title.trim().is_empty() {
         return Err(anyhow!("imported project needs a title"));
+    }
+    if project.elements.len() > 5_000 {
+        return Err(anyhow!("imported project has too many elements (max 5000)"));
+    }
+    if project.links.len() > 20_000 {
+        return Err(anyhow!("imported project has too many links (max 20000)"));
     }
     let mut title_index = HashMap::new();
     for el in &project.elements {

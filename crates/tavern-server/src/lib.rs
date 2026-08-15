@@ -53,10 +53,10 @@ pub async fn build_state(config: Config) -> Result<Arc<AppState>> {
             || config.listen.starts_with("localhost")
             || config.listen.starts_with("[::1]");
         if !loopback {
-            tracing::warn!(
-                listen = %config.listen,
-                "TAVERN_TRUST_PROXY is enabled but the process is not listening on loopback — \
-                 clients that can reach this port may spoof X-Forwarded-For / X-Real-IP"
+            anyhow::bail!(
+                "TAVERN_TRUST_PROXY=1 requires a loopback listen address (got {}); \
+                 otherwise clients can spoof X-Forwarded-For / X-Real-IP and bypass rate limits",
+                config.listen
             );
         }
     }
@@ -73,7 +73,10 @@ pub async fn build_state(config: Config) -> Result<Arc<AppState>> {
 pub fn app(state: Arc<AppState>) -> Router {
     Router::new()
         .merge(routes::router())
-        .layer(middleware::from_fn(security::security_headers))
+        .layer(middleware::from_fn_with_state(
+            state.clone(),
+            security::security_headers,
+        ))
         .layer(CompressionLayer::new())
         .layer(TraceLayer::new_for_http())
         .layer(DefaultBodyLimit::max(MAX_REQUEST_BODY_BYTES))

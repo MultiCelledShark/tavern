@@ -435,26 +435,20 @@ impl Db {
     }
 
     pub async fn consume_email_token(&self, token: &str, purpose: &str) -> Result<Option<Uuid>> {
+        let now = Utc::now();
         let row = sqlx::query(
-            "SELECT user_id, expires_at FROM email_tokens WHERE token_hash = $1 AND purpose = $2",
+            "DELETE FROM email_tokens
+             WHERE token_hash = $1
+               AND purpose = $2
+               AND expires_at >= $3
+             RETURNING user_id",
         )
         .bind(Self::hash_secret(token))
         .bind(purpose)
+        .bind(now.to_rfc3339())
         .fetch_optional(&self.pool)
         .await?;
-        let Some(r) = row else {
-            return Ok(None);
-        };
-        let expires = parse_dt(r.get::<String, _>("expires_at"));
-        let user_id = Uuid::parse_str(r.get::<String, _>("user_id").as_str()).unwrap();
-        sqlx::query("DELETE FROM email_tokens WHERE token_hash = $1")
-            .bind(Self::hash_secret(token))
-            .execute(&self.pool)
-            .await?;
-        if expires < Utc::now() {
-            return Ok(None);
-        }
-        Ok(Some(user_id))
+        Ok(row.map(|r| Uuid::parse_str(r.get::<String, _>("user_id").as_str()).unwrap()))
     }
 
     pub async fn delete_session(&self, token: &str) -> Result<()> {

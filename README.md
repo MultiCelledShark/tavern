@@ -27,9 +27,9 @@ cd web && npm install && npm run build && cd ..
 cargo run -p tavern-server
 ```
 
-Open http://127.0.0.1:8084 and log in with `TAVERN_ADMIN_USER` / `TAVERN_ADMIN_PASS`. Writers can sign up once SMTP (or log-only mail) is configured — see `.env.example`.
+Open http://127.0.0.1:8084 and log in with `TAVERN_ADMIN_USER` / `TAVERN_ADMIN_PASS`. Public signup is off by default (`TAVERN_SIGNUP=1` when SMTP is ready) — see `.env.example`.
 
-For a public host: listen on `127.0.0.1` behind TLS (nginx/Caddy), set `TAVERN_COOKIE_SECURE=1` and `TAVERN_TRUST_PROXY=1`, configure SMTP + `TAVERN_PUBLIC_URL`, and keep `TAVERN_SIGNUP=0` until mail works.
+For a public host: listen on `127.0.0.1` behind TLS (nginx/Caddy), set `TAVERN_COOKIE_SECURE=1` and `TAVERN_TRUST_PROXY=1`, configure SMTP + `TAVERN_PUBLIC_URL`, and leave signup disabled until mail works.
 
 Dev UI with HMR:
 

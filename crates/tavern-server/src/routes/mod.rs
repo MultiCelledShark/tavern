@@ -70,7 +70,7 @@ pub fn router() -> Router<Arc<AppState>> {
         .route("/api/auth/forgot", post(forgot_password))
         .route("/api/auth/reset", post(reset_password))
         .route("/api/auth/vault", get(get_vault).put(put_vault))
-        .route("/api/auth/reset-vault", get(reset_vault))
+        .route("/api/auth/reset-vault", post(reset_vault))
         .route("/api/crypto/pubkey/{username}", get(crypto_pubkey))
         .route("/api/projects/{id}/key-wrap", put(put_project_key_wrap))
         .route(
@@ -212,12 +212,23 @@ async fn login(
 async fn logout(
     State(state): State<Arc<AppState>>,
     jar: CookieJar,
+    headers: HeaderMap,
 ) -> Result<(CookieJar, StatusCode), ApiError> {
-    if let Some(c) = jar.get("tavern_session") {
+    let token = jar
+        .get("tavern_session")
+        .map(|c| c.value().to_string())
+        .or_else(|| {
+            headers
+                .get(header::AUTHORIZATION)
+                .and_then(|v| v.to_str().ok())
+                .and_then(|v| v.strip_prefix("Bearer "))
+                .map(|s| s.to_string())
+        });
+    if let Some(token) = token {
         state
             .sessions
-            .remove(&tavern_db::Db::hash_secret(c.value()));
-        let _ = state.db.delete_session(c.value()).await;
+            .remove(&tavern_db::Db::hash_secret(&token));
+        let _ = state.db.delete_session(&token).await;
     }
     let mut cookie = Cookie::new("tavern_session", "");
     cookie.set_path("/");
@@ -495,6 +506,12 @@ fn validate_crypto_json(s: &str) -> Result<(), ApiError> {
     if !ok {
         return Err(ApiError::bad("invalid vault envelope"));
     }
+    let pub_b64 = v.get("pub").and_then(|x| x.as_str()).unwrap_or("");
+    let priv_wrap = v.get("priv_wrap").and_then(|x| x.as_str()).unwrap_or("");
+    // P-256 uncompressed point is 65 bytes → ~88 chars base64; reject empty/huge.
+    if !(40..=256).contains(&pub_b64.len()) || !(40..=8_192).contains(&priv_wrap.len()) {
+        return Err(ApiError::bad("invalid vault envelope field sizes"));
+    }
     Ok(())
 }
 
@@ -527,6 +544,21 @@ async fn put_vault(
 ) -> Result<StatusCode, ApiError> {
     let raw = body.crypto_json.to_string();
     validate_crypto_json(&raw)?;
+    if let Some(existing) = state.db.get_crypto_json(user.id).await? {
+        let old: serde_json::Value =
+            serde_json::from_str(&existing).map_err(|_| ApiError::bad("corrupt vault on server"))?;
+        let old_pub = old.get("pub").and_then(|x| x.as_str()).unwrap_or("");
+        let new_pub = body
+            .crypto_json
+            .get("pub")
+            .and_then(|x| x.as_str())
+            .unwrap_or("");
+        if !old_pub.is_empty() && old_pub != new_pub {
+            return Err(ApiError::bad(
+                "vault public key cannot change; use password reset with recovery key",
+            ));
+        }
+    }
     state.db.set_crypto_json(user.id, &raw).await?;
     // Session cache may still have has_vault=false from login; drop it so /me refreshes.
     state.sessions.remove_user(user.id);
@@ -534,15 +566,22 @@ async fn put_vault(
 }
 
 #[derive(Deserialize)]
-struct ResetVaultQuery {
+struct ResetVaultBody {
     token: String,
 }
 
 async fn reset_vault(
     State(state): State<Arc<AppState>>,
-    Query(q): Query<ResetVaultQuery>,
+    ConnectInfo(addr): ConnectInfo<SocketAddr>,
+    headers: HeaderMap,
+    Json(body): Json<ResetVaultBody>,
 ) -> Result<Json<serde_json::Value>, ApiError> {
-    let Some(user_id) = state.db.peek_email_token(q.token.trim(), "reset").await? else {
+    let ip = client_ip(&headers, Some(addr), state.config.trust_proxy);
+    let window = Duration::from_secs(3600);
+    if !state.limiter.check(&format!("reset-vault:{ip}"), 20, window) {
+        return Err(ApiError::limited());
+    }
+    let Some(user_id) = state.db.peek_email_token(body.token.trim(), "reset").await? else {
         return Err(ApiError::not_found("reset"));
     };
     let vault = state.db.get_crypto_json(user_id).await?;
@@ -1345,6 +1384,9 @@ async fn put_manuscript(
 ) -> Result<Json<ManuscriptBody>, ApiError> {
     let el = visible_element(&state, &user, id).await?;
     require_edit(&state, &user, el.project_id).await?;
+    if body.markdown.len() > 8 * 1024 * 1024 {
+        return Err(ApiError::bad("manuscript too large (max 8MB)"));
+    }
     let (current_md, current_goal, current_at) = state.db.get_manuscript(id).await?;
     let goal = body.word_goal.unwrap_or(current_goal);
     let Some(updated_at) = state
@@ -1494,6 +1536,12 @@ async fn export_project(
     );
     let out_path = out_dir.join(&filename);
     write_with_pandoc(&markdown, &out_path, format)?;
+    let meta = std::fs::metadata(&out_path)?;
+    const MAX_EXPORT: u64 = 256 * 1024 * 1024;
+    if meta.len() > MAX_EXPORT {
+        let _ = std::fs::remove_file(&out_path);
+        return Err(ApiError::bad("export too large (max 256MB); split the project or delete assets"));
+    }
     let bytes = std::fs::read(&out_path)?;
     if let Err(e) = ensure_owner_quota(&state, owner, 0).await {
         let _ = std::fs::remove_file(&out_path);
@@ -1561,6 +1609,14 @@ async fn backup_project(
     std::fs::create_dir_all(&out_dir)?;
     let out = out_dir.join(format!("{}.tavern", sanitize(&project.title)));
     write_tavern_backup(&out, &intermediate, Some(&assets))?;
+    let meta = std::fs::metadata(&out)?;
+    const MAX_BACKUP: u64 = 256 * 1024 * 1024;
+    if meta.len() > MAX_BACKUP {
+        let _ = std::fs::remove_file(&out);
+        return Err(ApiError::bad(
+            "backup too large (max 256MB); remove assets or export chapters separately",
+        ));
+    }
     let bytes = std::fs::read(&out)?;
     if let Err(e) = ensure_owner_quota(&state, owner, 0).await {
         let _ = std::fs::remove_file(&out);

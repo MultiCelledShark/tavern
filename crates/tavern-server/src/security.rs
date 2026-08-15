@@ -1,11 +1,19 @@
+use axum::extract::State;
 use axum::http::{header, HeaderMap, HeaderValue, Request};
 use axum::middleware::Next;
 use axum::response::Response;
 use std::net::SocketAddr;
+use std::sync::Arc;
+
+use crate::state::AppState;
 
 const CSP: &str = "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com; img-src 'self' data: blob: https:; connect-src 'self'; frame-ancestors 'none'; base-uri 'self'; form-action 'self'";
 
-pub async fn security_headers(req: Request<axum::body::Body>, next: Next) -> Response {
+pub async fn security_headers(
+    State(state): State<Arc<AppState>>,
+    req: Request<axum::body::Body>,
+    next: Next,
+) -> Response {
     let mut res = next.run(req).await;
     let headers = res.headers_mut();
     headers.insert(
@@ -23,6 +31,12 @@ pub async fn security_headers(req: Request<axum::body::Body>, next: Next) -> Res
     );
     if let Ok(csp) = HeaderValue::from_str(CSP) {
         headers.insert(header::CONTENT_SECURITY_POLICY, csp);
+    }
+    if state.config.cookie_secure {
+        headers.insert(
+            header::STRICT_TRANSPORT_SECURITY,
+            HeaderValue::from_static("max-age=31536000; includeSubDomains"),
+        );
     }
     res
 }

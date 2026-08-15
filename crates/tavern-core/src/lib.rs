@@ -36,7 +36,7 @@ impl Default for Config {
             admin_password: "replace-with-a-long-secret".into(),
             cookie_secure: false,
             trust_proxy: false,
-            signup_enabled: true,
+            signup_enabled: false,
             public_url: "http://127.0.0.1:8084".into(),
             admin_email: None,
             smtp_host: None,

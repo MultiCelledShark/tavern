@@ -281,7 +281,10 @@ export const api = {
   putVault: (crypto_json: VaultEnvelope) =>
     req<void>("/api/auth/vault", { method: "PUT", body: JSON.stringify({ crypto_json }) }),
   resetVault: (token: string) =>
-    req<{ vault: VaultEnvelope | null }>(`/api/auth/reset-vault?token=${encodeURIComponent(token)}`),
+    req<{ vault: VaultEnvelope | null }>("/api/auth/reset-vault", {
+      method: "POST",
+      body: JSON.stringify({ token }),
+    }),
   cryptoPubkey: (username: string) =>
     req<{ user_id: string; pub: string }>(`/api/crypto/pubkey/${encodeURIComponent(username)}`),
   listUsers: () => req<User[]>("/api/users"),
