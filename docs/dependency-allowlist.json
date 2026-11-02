@@ -20,6 +20,7 @@
       "sha2",
       "sqlx",
       "tokio",
+      "tokio-util",
       "tower-http",
       "tracing",
       "tracing-subscriber",
@@ -37,6 +38,7 @@
   },
   "npm": {
     "allowed_dependencies": [
+      "fflate",
       "react",
       "react-dom"
     ],

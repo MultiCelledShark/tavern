@@ -45,6 +45,7 @@ Workspace path crates (`tavern-core`, `tavern-db`, `tavern-import`, `tavern-expo
 | Package | Why |
 |---|---|
 | `react` / `react-dom` | UI |
+| `fflate` | client-side ZIP import parsing |
 
 **Dev-only allow:** `vite`, `@vitejs/plugin-react`, `typescript`, `@types/react`, `@types/react-dom`.
 

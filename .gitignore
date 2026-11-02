@@ -18,6 +18,7 @@ web/node_modules/
 samples/private/
 docs/homelab.md
 import-samples/
+vendor/
 
 # OS / editor
 .DS_Store
