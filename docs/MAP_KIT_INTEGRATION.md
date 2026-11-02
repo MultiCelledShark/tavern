@@ -1,17 +1,25 @@
 # Map / society kit integration (planning)
 
-Tavern already ships a **Maps** module: upload a background image, place pins, link pins to **Locations** elements (`web/src/components/MapCanvas.tsx`). That is lore-oriented charting, not a full cartography or society-simulation toolchain.
+**Kit:** [Silent Cartographer](https://origin.cursor.com/mcs/silent-cartographer) — `https://origin.cursor.com/mcs/silent-cartographer.git` (Origin namespace `mcs/silent-cartographer`).
 
-This doc tracks integrating a separate **map-making / society-building kit** once its source repo is linked into this workspace.
+Tavern already ships a **Maps** module: upload a background image, place pins, link pins to **Locations** elements (`web/src/components/MapCanvas.tsx`). That is lore-oriented charting, not a full cartography or society-simulation toolchain. Silent Cartographer is the separate map-making / society-building kit to integrate here.
 
-## What we need from you
+## Access (blocker for cloud agents)
 
-1. **Repository URL** (Forgejo SSH, GitHub, or tarball) and default branch for the kit.
+This environment **cannot clone** the Origin repo yet (`origin auth status` → not authenticated; HTTPS/SSH clone prompts fail). To unblock Phase A:
+
+1. **Grant the Cursor cloud agent** read access to `mcs/silent-cartographer` on Origin (same account/team that owns Tavern), **or**
+2. **Mirror** the repo to Forgejo / a private GitHub repo the agent can reach, **or**
+3. **Vendor a tarball** into the Tavern repo or attach a one-time export for inventory (only if you are OK with that surface).
+
+After clone, target path: `vendor/silent-cartographer/` (gitignored or submodule — TBD).
+
+## What we still need from you
+
+1. **Default branch** and **license** (MIT-compatible with Tavern?).
 2. **Target UX**: embed inside Tavern as a new module, open in a side panel, or link out to a standalone tool?
-3. **Data model**: should output become Tavern **elements** (locations, cultures, timeline events), binary **assets**, or a new module type?
+3. **Data model**: should Cartographer output become Tavern **elements** (locations, cultures, timeline events), binary **assets**, or a new module type?
 4. **Crypto**: if projects use the client vault, whether kit artifacts must be encrypted like other project JSON/assets.
-
-The kit is not in the public `MultiCelledShark` GitHub org from this agent’s search; homelab/Forgejo is the likely home.
 
 ## Suggested integration phases
 
@@ -42,7 +50,7 @@ Default recommendation: **library or JSON bridge** so imports land in existing m
 
 ### Phase D — Production
 
-- Feature-flag env `TAVERN_MAP_KIT=1` for staged rollout on `tav.pathsecho.quest`.
+- Feature-flag env `TAVERN_SILENT_CARTOGRAPHER=1` (or `TAVERN_MAP_KIT=1`) for staged rollout on `tav.pathsecho.quest`.
 - Smoke: create chart → save → reload → export `.tavern` → second user with grant.
 
 ## Dependency / security gate (parallel track)
@@ -55,4 +63,12 @@ Before large UI integration, keep `./scripts/check-deps.sh` green on `master` (a
 - Offline-only vs needs external tile servers?
 - Multiplayer / shared editing, or single-writer like the rest of Tavern?
 
-Update this file when the kit repo is identified and Phase A inventory is done.
+Update this file after Phase A inventory (stack, export format, overlap with Tavern modules).
+
+## Phase A checklist (pending clone)
+
+- [ ] Clone `mcs/silent-cartographer`
+- [ ] README / build / test commands
+- [ ] Output schema (JSON, GeoJSON, tiles, custom binary?)
+- [ ] Runtime deps vs `docs/dependency-allowlist.json`
+- [ ] Overlap matrix: Maps, Locations, Cultures, Timeline, Systems
