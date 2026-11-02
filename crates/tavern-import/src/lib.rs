@@ -202,7 +202,12 @@ fn load_zip(bytes: &[u8], filename: Option<&str>) -> Result<(IntermediateProject
 
     // Scan for any JSON files and try to harvest elements
     let names: Vec<String> = (0..archive.len())
-        .filter_map(|i| archive.by_index(i).ok().map(|f| f.name().to_string()))
+        .filter_map(|i| {
+            archive
+                .by_index(i)
+                .ok()
+                .and_then(|f| f.name().ok().map(|n| n.into_owned()))
+        })
         .collect();
     notes.push(format!("Entries: {}", names.join(", ")));
 

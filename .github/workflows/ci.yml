@@ -1,0 +1,58 @@
+name: ci
+
+on:
+  push:
+    branches: [master, main]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  rust:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: tavern
+          POSTGRES_PASSWORD: tavern
+          POSTGRES_DB: tavern
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U tavern -d tavern"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 10
+    env:
+      TAVERN_DATABASE_URL: postgres://tavern:tavern@127.0.0.1:5432/tavern
+      TAVERN_ADMIN_PASS: ci-test-admin-pass
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - name: Install cargo-deny
+        run: cargo install cargo-deny --locked
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+
+      - name: Install web lockfile
+        working-directory: web
+        run: npm ci
+
+      - name: Dependency hardening gate
+        env:
+          REQUIRE_CARGO_DENY: "1"
+          CI: "true"
+        run: ./scripts/check-deps.sh
+
+      - name: Build and test Rust workspace
+        run: cargo test --workspace --release
+
+      - name: Build web UI
+        working-directory: web
+        run: npm run build
